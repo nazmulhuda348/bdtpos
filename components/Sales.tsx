@@ -1,6 +1,5 @@
-
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Sale, Product, Store, User, UserRole } from '../types';
+import { Sale, Product, Store, User, UserRole, Customer, Expense } from '../types';
 import { 
   ShoppingCart, 
   Search, 
@@ -19,17 +18,25 @@ import {
   Package,
   History,
   LayoutDashboard,
-  TrendingUp
+  TrendingUp,
+  Printer,
+  Download,
+  CreditCard
 } from 'lucide-react';
+
+import { motion, AnimatePresence } from 'framer-motion';
 
 interface SalesProps {
   sales: Sale[];
   products: Product[];
+  customers: Customer[];
+  expenses: Expense[];
   currentStore: Store;
   currentUser: User;
   onAddSale: (sale: Omit<Sale, 'id' | 'timestamp'>) => void;
   onUpdateSale: (id: string, updates: Partial<Sale>) => void;
   onUpdateStock: (id: string, updates: Partial<Product>) => void;
+  onUpdateCustomerDue: (id: string, amount: number) => void;
   onDeleteSale: (id: string) => void;
   canDelete: boolean;
 }
@@ -37,11 +44,14 @@ interface SalesProps {
 const Sales: React.FC<SalesProps> = ({ 
   sales, 
   products, 
+  customers,
+  expenses,
   currentStore, 
   currentUser, 
   onAddSale, 
   onUpdateSale,
   onUpdateStock,
+  onUpdateCustomerDue,
   onDeleteSale,
   canDelete
 }) => {
@@ -57,12 +67,16 @@ const Sales: React.FC<SalesProps> = ({
   // Form State
   const [skuId, setSkuId] = useState('');
   const [matchedProduct, setMatchedProduct] = useState<Product | null>(null);
+  const [customerId, setCustomerId] = useState('');
   const [customerName, setCustomerName] = useState('');
   const [quantity, setQuantity] = useState(1);
   const [unitPrice, setUnitPrice] = useState(0);
   const [discount, setDiscount] = useState(0);
+  const [amountPaid, setAmountPaid] = useState(0);
   const [invoiceId, setInvoiceId] = useState('');
   const [showSuccessToast, setShowSuccessToast] = useState(false);
+  const [showPrintModal, setShowPrintModal] = useState(false);
+  const [selectedInvoiceForPrint, setSelectedInvoiceForPrint] = useState<string | null>(null);
 
   // Initial Invoice Generation for the session
   useEffect(() => {
@@ -80,6 +94,7 @@ const Sales: React.FC<SalesProps> = ({
     setQuantity(1);
     setUnitPrice(0);
     setDiscount(0);
+    setAmountPaid(0);
     setScannerError(null);
   };
 
@@ -181,8 +196,12 @@ const Sales: React.FC<SalesProps> = ({
       return;
     }
 
+    const totalCost = totalAmount;
+    const currentDue = Math.max(0, totalCost - amountPaid);
+
     onAddSale({
       invoiceId,
+      customerId: customerId || undefined,
       customerName: customerName || 'Walk-in Customer',
       productId: matchedProduct.id,
       productName: matchedProduct.name,
@@ -191,10 +210,16 @@ const Sales: React.FC<SalesProps> = ({
       unitPrice,
       discount,
       totalPrice: totalAmount,
+      amountPaid,
+      amountDue: currentDue,
       storeId: currentStore.id
     });
 
     onUpdateStock(matchedProduct.id, { quantity: matchedProduct.quantity - quantity });
+    
+    if (customerId && currentDue > 0) {
+      onUpdateCustomerDue(customerId, currentDue);
+    }
     
     setShowSuccessToast(true);
     setTimeout(() => setShowSuccessToast(false), 1500);
@@ -240,6 +265,7 @@ const Sales: React.FC<SalesProps> = ({
   const todayStats = useMemo(() => {
     const today = new Date().toISOString().split('T')[0];
     const todaySales = sales.filter(s => s.storeId === currentStore.id && s.timestamp.startsWith(today));
+    const todayExpenses = expenses.filter(e => e.storeId === currentStore.id && e.timestamp.startsWith(today));
     
     const totalSales = todaySales.reduce((acc, s) => acc + s.totalPrice, 0);
     const totalProfit = todaySales.reduce((acc, s) => {
@@ -248,9 +274,45 @@ const Sales: React.FC<SalesProps> = ({
       const cost = buyingPrice * s.quantity;
       return acc + (s.totalPrice - cost);
     }, 0);
+    const totalExpense = todayExpenses.reduce((acc, e) => acc + e.amount, 0);
+    const netBalance = totalSales - totalExpense;
 
-    return { totalSales, totalProfit };
-  }, [sales, products, currentStore.id]);
+    return { totalSales, totalProfit, totalExpense, netBalance };
+  }, [sales, products, expenses, currentStore.id]);
+
+  const exportToCSV = () => {
+    const headers = ['Invoice', 'Customer', 'Product', 'Qty', 'Unit Price', 'Discount', 'Total', 'Paid', 'Due', 'Date'];
+    const data = sales
+      .filter(s => s.storeId === currentStore.id)
+      .map(s => [
+        s.invoiceId,
+        s.customerName,
+        s.productName,
+        s.quantity,
+        s.unitPrice.toFixed(2),
+        s.discount + '%',
+        s.totalPrice.toFixed(2),
+        (s.amountPaid || 0).toFixed(2),
+        (s.amountDue || 0).toFixed(2),
+        new Date(s.timestamp).toLocaleDateString()
+      ]);
+    
+    const csvContent = [headers, ...data].map(e => e.join(",")).join("\n");
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    link.setAttribute("download", `sales_${currentStore.name.replace(/\s+/g, '_')}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handlePrint = (invId: string) => {
+    setSelectedInvoiceForPrint(invId);
+    setShowPrintModal(true);
+  };
 
   // Main View: Historical Ledger
   if (!isSessionActive) {
@@ -271,34 +333,64 @@ const Sales: React.FC<SalesProps> = ({
             <h1 className="text-3xl font-black text-white tracking-tight">Sales Operations</h1>
             <p className="text-slate-500 font-medium italic">General ledger for <span className="gold-gradient-text font-black">{currentStore.name}</span></p>
           </div>
-          <button 
-            onClick={() => setIsSessionActive(true)}
-            className="bg-gradient-to-r from-amber-400 to-amber-600 text-slate-950 px-6 py-4 rounded-2xl font-black flex items-center gap-3 hover:scale-[1.02] transition-all shadow-xl shadow-amber-900/10 uppercase tracking-widest text-xs"
-          >
-            <ShoppingCart className="w-5 h-5 stroke-[3px]" />
-            Record New Sale
-          </button>
+          <div className="flex items-center gap-3">
+            <button 
+              onClick={exportToCSV}
+              className="p-4 bg-slate-900 border border-slate-800 text-slate-400 rounded-2xl hover:text-white transition-all shadow-xl"
+            >
+              <Download className="w-5 h-5" />
+            </button>
+            <button 
+              onClick={() => setIsSessionActive(true)}
+              className="bg-gradient-to-r from-amber-400 to-amber-600 text-slate-950 px-6 py-4 rounded-2xl font-black flex items-center gap-3 hover:scale-[1.02] transition-all shadow-xl shadow-amber-900/10 uppercase tracking-widest text-xs"
+            >
+              <ShoppingCart className="w-5 h-5 stroke-[3px]" />
+              Record New Sale
+            </button>
+          </div>
         </div>
 
         {/* Today's Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="bg-slate-900/50 backdrop-blur-md p-8 rounded-[2.5rem] border border-slate-800 shadow-2xl flex items-center gap-6 group hover:border-amber-500/30 transition-all">
-            <div className="w-16 h-16 bg-amber-400/10 rounded-3xl flex items-center justify-center text-amber-400 group-hover:scale-110 transition-transform">
-              <DollarSign className="w-8 h-8" />
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 shadow-2xl flex items-center gap-4 group hover:border-amber-500/30 transition-all">
+            <div className="w-12 h-12 bg-amber-400/10 rounded-2xl flex items-center justify-center text-amber-400 group-hover:scale-110 transition-transform">
+              <DollarSign className="w-6 h-6" />
             </div>
             <div>
-              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Today's Total Sales</p>
-              <h3 className="text-3xl font-black text-white tracking-tighter">${todayStats.totalSales.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Today's Sales</p>
+              <h3 className="text-xl font-black text-white tracking-tighter">${todayStats.totalSales.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
             </div>
           </div>
 
-          <div className="bg-slate-900/50 backdrop-blur-md p-8 rounded-[2.5rem] border border-slate-800 shadow-2xl flex items-center gap-6 group hover:border-emerald-500/30 transition-all">
-            <div className="w-16 h-16 bg-emerald-400/10 rounded-3xl flex items-center justify-center text-emerald-400 group-hover:scale-110 transition-transform">
-              <TrendingUp className="w-8 h-8" />
+          <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 shadow-2xl flex items-center gap-4 group hover:border-emerald-500/30 transition-all">
+            <div className="w-12 h-12 bg-emerald-400/10 rounded-2xl flex items-center justify-center text-emerald-400 group-hover:scale-110 transition-transform">
+              <TrendingUp className="w-6 h-6" />
             </div>
             <div>
-              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Today's Total Profit</p>
-              <h3 className="text-3xl font-black text-emerald-400 tracking-tighter">${todayStats.totalProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Today's Profit</p>
+              <h3 className="text-xl font-black text-emerald-400 tracking-tighter">${todayStats.totalProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+            </div>
+          </div>
+
+          <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 shadow-2xl flex items-center gap-4 group hover:border-rose-500/30 transition-all">
+            <div className="w-12 h-12 bg-rose-400/10 rounded-2xl flex items-center justify-center text-rose-400 group-hover:scale-110 transition-transform">
+              <Zap className="w-6 h-6" />
+            </div>
+            <div>
+              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Today's Expense</p>
+              <h3 className="text-xl font-black text-rose-400 tracking-tighter">${todayStats.totalExpense.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+            </div>
+          </div>
+
+          <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 shadow-2xl flex items-center gap-4 group hover:border-blue-500/30 transition-all">
+            <div className="w-12 h-12 bg-blue-400/10 rounded-2xl flex items-center justify-center text-blue-400 group-hover:scale-110 transition-transform">
+              <LayoutDashboard className="w-6 h-6" />
+            </div>
+            <div>
+              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Net Balance</p>
+              <h3 className={`text-xl font-black tracking-tighter ${todayStats.netBalance >= 0 ? 'text-blue-400' : 'text-rose-400'}`}>
+                ${todayStats.netBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </h3>
             </div>
           </div>
         </div>
@@ -322,6 +414,7 @@ const Sales: React.FC<SalesProps> = ({
             <table className="w-full text-left">
               <thead>
                 <tr className="text-[10px] font-black text-slate-500 uppercase tracking-widest border-b border-slate-800">
+                  <th className="px-6 py-5">Date</th>
                   <th className="px-6 py-5">Invoice</th>
                   <th className="px-6 py-5">Customer</th>
                   <th className="px-6 py-5">Item</th>
@@ -333,15 +426,24 @@ const Sales: React.FC<SalesProps> = ({
               <tbody className="divide-y divide-slate-800/50">
                 {historicalSales.map((sale) => (
                   <tr key={sale.id} className="group hover:bg-slate-800/40 transition-all">
+                    <td className="px-6 py-5 font-bold text-slate-400 text-xs whitespace-nowrap">
+                      {new Date(sale.timestamp).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                    </td>
                     <td className="px-6 py-5 font-black text-white text-xs tracking-tighter">{sale.invoiceId}</td>
                     <td className="px-6 py-5 text-sm font-bold text-slate-300">{sale.customerName}</td>
                     <td className="px-6 py-5 text-sm text-slate-400">{sale.productName}</td>
                     <td className="px-6 py-5 text-center font-black text-white text-sm">{sale.quantity}</td>
-                    <td className="px-6 py-5 text-right font-black text-emerald-400 text-sm">${sale.totalPrice.toFixed(2)}</td>
+                    <td className="px-6 py-5 text-right font-black text-emerald-400 text-sm">
+                      <p>${sale.totalPrice.toFixed(2)}</p>
+                      {sale.amountDue > 0 && <p className="text-rose-400 text-[9px] uppercase tracking-tighter">Due: ${sale.amountDue.toFixed(2)}</p>}
+                    </td>
                     <td className="px-6 py-5 text-right">
-                      {canDelete && (
-                        <button onClick={() => onDeleteSale(sale.id)} className="p-2 text-slate-600 hover:text-rose-500"><Trash2 className="w-4 h-4" /></button>
-                      )}
+                      <div className="flex items-center justify-end gap-2">
+                        <button onClick={() => handlePrint(sale.invoiceId)} className="p-2 text-slate-600 hover:text-amber-400"><Printer className="w-4 h-4" /></button>
+                        {canDelete && (
+                          <button onClick={() => onDeleteSale(sale.id)} className="p-2 text-slate-600 hover:text-rose-500"><Trash2 className="w-4 h-4" /></button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -437,12 +539,20 @@ const Sales: React.FC<SalesProps> = ({
             <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Customer Profile</label>
             <div className="relative group">
               <UserIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-amber-400 transition-colors" />
-              <input 
-                value={customerName}
-                onChange={e => setCustomerName(e.target.value)}
-                placeholder="Walk-in Customer" 
-                className="w-full pl-12 pr-4 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400" 
-              />
+              <select 
+                value={customerId}
+                onChange={e => {
+                  const cust = customers.find(c => c.id === e.target.value);
+                  setCustomerId(e.target.value);
+                  setCustomerName(cust ? cust.name : '');
+                }}
+                className="w-full pl-12 pr-4 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 appearance-none"
+              >
+                <option value="">Walk-in Customer</option>
+                {customers.filter(c => c.storeId === currentStore.id).map(c => (
+                  <option key={c.id} value={c.id}>{c.name} ({c.phone})</option>
+                ))}
+              </select>
             </div>
           </div>
 
@@ -480,16 +590,31 @@ const Sales: React.FC<SalesProps> = ({
           </div>
 
           {/* MANUAL INPUT: DISCOUNT ADJUSTMENT */}
-          <div className={`space-y-2 transition-all duration-500 ${!matchedProduct ? 'opacity-30 pointer-events-none blur-[1px]' : ''}`}>
-            <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">discount adjustment (%)</label>
-            <input 
-              type="number" 
-              min="0" 
-              max="100" 
-              value={discount}
-              onChange={e => setDiscount(parseFloat(e.target.value) || 0)}
-              className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-rose-500 font-black focus:border-amber-400 amber-glow" 
-            />
+          <div className={`grid grid-cols-2 gap-4 transition-all duration-500 ${!matchedProduct ? 'opacity-30 pointer-events-none blur-[1px]' : ''}`}>
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">discount (%)</label>
+              <input 
+                type="number" 
+                min="0" 
+                max="100" 
+                value={discount}
+                onChange={e => setDiscount(parseFloat(e.target.value) || 0)}
+                className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-rose-500 font-black focus:border-amber-400 amber-glow" 
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">amount paid ($)</label>
+              <div className="relative group">
+                <CreditCard className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-amber-400 transition-colors" />
+                <input 
+                  type="number" 
+                  step="0.01" 
+                  value={amountPaid}
+                  onChange={e => setAmountPaid(parseFloat(e.target.value) || 0)}
+                  className="w-full pl-12 pr-4 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-amber-400 font-black focus:border-amber-400 amber-glow" 
+                />
+              </div>
+            </div>
           </div>
 
           <div className={`bg-slate-950 p-6 rounded-3xl border border-slate-800 mt-auto ${!matchedProduct ? 'opacity-50 grayscale' : ''}`}>
@@ -610,7 +735,116 @@ const Sales: React.FC<SalesProps> = ({
         .animate-scan {
           animation: scan 1.5s ease-in-out infinite;
         }
+        @media print {
+          .no-print { display: none !important; }
+          .print-only { display: block !important; }
+          body { background: white !important; color: black !important; }
+        }
       `}</style>
+
+      <AnimatePresence>
+        {showPrintModal && selectedInvoiceForPrint && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 no-print">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowPrintModal(false)}
+              className="absolute inset-0 bg-slate-950/90 backdrop-blur-md"
+            />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="relative w-full max-w-2xl bg-white text-slate-950 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+            >
+              <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                <h3 className="font-black uppercase tracking-widest text-xs text-slate-500">Invoice Preview</h3>
+                <div className="flex items-center gap-2">
+                  <button 
+                    onClick={() => window.print()}
+                    className="bg-slate-950 text-white px-4 py-2 rounded-xl font-bold text-[10px] uppercase tracking-widest flex items-center gap-2 hover:bg-slate-800 transition-colors"
+                  >
+                    <Printer className="w-4 h-4" /> Print
+                  </button>
+                  <button 
+                    onClick={() => setShowPrintModal(false)}
+                    className="p-2 text-slate-400 hover:text-slate-600 transition-colors"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-12 print-content" id="printable-invoice">
+                <div className="flex justify-between items-start mb-12">
+                  <div>
+                    <h1 className="text-4xl font-black tracking-tighter mb-2">{currentStore.name}</h1>
+                    <p className="text-xs text-slate-500 font-bold uppercase tracking-widest">{currentStore.location}</p>
+                  </div>
+                  <div className="text-right">
+                    <h2 className="text-xl font-black uppercase tracking-tighter mb-1">Invoice</h2>
+                    <p className="text-xs font-bold text-slate-400">{selectedInvoiceForPrint}</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-12 mb-12">
+                  <div>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Billed To</p>
+                    <p className="font-black text-lg">{sales.find(s => s.invoiceId === selectedInvoiceForPrint)?.customerName || 'Walk-in Customer'}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Date Issued</p>
+                    <p className="font-black text-lg">{new Date(sales.find(s => s.invoiceId === selectedInvoiceForPrint)?.timestamp || '').toLocaleDateString()}</p>
+                  </div>
+                </div>
+
+                <table className="w-full mb-12">
+                  <thead>
+                    <tr className="border-b-2 border-slate-950 text-[10px] font-black uppercase tracking-widest">
+                      <th className="py-4 text-left">Description</th>
+                      <th className="py-4 text-center">Qty</th>
+                      <th className="py-4 text-right">Unit</th>
+                      <th className="py-4 text-right">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {sales.filter(s => s.invoiceId === selectedInvoiceForPrint).map(item => (
+                      <tr key={item.id}>
+                        <td className="py-4 font-bold">{item.productName}</td>
+                        <td className="py-4 text-center font-bold">{item.quantity}</td>
+                        <td className="py-4 text-right font-bold">${item.unitPrice.toFixed(2)}</td>
+                        <td className="py-4 text-right font-black">${item.totalPrice.toFixed(2)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                <div className="flex justify-end">
+                  <div className="w-64 space-y-3">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-slate-500 font-bold">Subtotal</span>
+                      <span className="font-black">${sales.filter(s => s.invoiceId === selectedInvoiceForPrint).reduce((acc, curr) => acc + curr.totalPrice, 0).toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-slate-500 font-bold">Amount Paid</span>
+                      <span className="font-black text-emerald-600">${sales.filter(s => s.invoiceId === selectedInvoiceForPrint).reduce((acc, curr) => acc + (curr.amountPaid || 0), 0).toFixed(2)}</span>
+                    </div>
+                    <div className="border-t-2 border-slate-950 pt-3 flex justify-between items-center">
+                      <span className="text-xs font-black uppercase tracking-widest">Balance Due</span>
+                      <span className="text-2xl font-black">${sales.filter(s => s.invoiceId === selectedInvoiceForPrint).reduce((acc, curr) => acc + (curr.amountDue || 0), 0).toFixed(2)}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-20 pt-12 border-t border-slate-100 text-center">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em]">Thank you for your business</p>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

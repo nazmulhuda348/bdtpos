@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import Barcode from 'react-barcode';
-import { Product, Store, User, UserRole, Sale, Expense } from '../types';
+import { Product, Store, User, UserRole, Sale, Expense, Supplier, Purchase } from '../types';
 import { 
   Search, 
   Plus, 
@@ -22,11 +22,15 @@ import {
   ArrowRight,
   Database,
   Printer,
-  QrCode
+  QrCode,
+  Download,
+  Truck,
+  DollarSign
 } from 'lucide-react';
 
 interface InventoryProps {
   products: Product[];
+  suppliers: Supplier[];
   currentStore: Store;
   currentUser: User;
   categories: string[];
@@ -41,20 +45,26 @@ interface InventoryProps {
   onDeleteExpense: (id: string) => void;
   onAddCategory: (name: string) => void;
   onRemoveCategory: (name: string) => void;
+  onUpdateSupplierDue: (id: string, amount: number) => void;
+  onAddPurchase: (purchase: Omit<Purchase, 'id' | 'timestamp'>) => void;
   canEditPrices: boolean;
   canDelete: boolean;
 }
 
 const Inventory: React.FC<InventoryProps> = ({ 
   products, 
+  suppliers,
   currentStore, 
   currentUser, 
   categories,
   onUpdate, 
   onDelete,
   onAdd,
+  onAddExpense,
   onAddCategory,
   onRemoveCategory,
+  onUpdateSupplierDue,
+  onAddPurchase,
   canDelete
 }) => {
   const [isRegistrationActive, setIsRegistrationActive] = useState(false);
@@ -103,6 +113,30 @@ const Inventory: React.FC<InventoryProps> = ({
 
   const handlePrint = () => {
     window.print();
+  };
+
+  const exportToCSV = () => {
+    const headers = ['SKU', 'Name', 'Category', 'Quantity', 'Buying Price', 'Selling Price', 'Min Threshold'];
+    const data = filteredProducts.map(p => [
+      p.sku,
+      p.name.replace(/,/g, ';'),
+      p.category,
+      p.quantity,
+      p.buyingPrice.toFixed(2),
+      p.price.toFixed(2),
+      p.minThreshold
+    ]);
+    
+    const csvContent = [headers, ...data].map(e => e.join(",")).join("\n");
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    link.setAttribute("download", `inventory_${currentStore.name.replace(/\s+/g, '_')}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   const safeStopScanner = async () => {
@@ -184,25 +218,69 @@ const Inventory: React.FC<InventoryProps> = ({
     e.preventDefault();
     const form = e.target as any;
     
+    const supplierId = form.pSupplier?.value;
+    const paidAmount = parseFloat(form.pPaidAmount?.value || '0');
+    const supplier = suppliers.find(s => s.id === supplierId);
+
+    const quantity = matchedProduct ? parseInt(form.pNewQty.value) : parseInt(form.pQty.value);
+    const buyingPrice = parseFloat(form.pBuyingPrice.value);
+    const totalCost = quantity * buyingPrice;
+    const dueAmount = totalCost - paidAmount;
+
     if (matchedProduct) {
-      const newVolume = parseInt(form.pNewQty.value);
-      const newBuyingPrice = parseFloat(form.pBuyingPrice.value);
       onUpdate(matchedProduct.id, { 
-        quantity: matchedProduct.quantity + newVolume,
-        buyingPrice: newBuyingPrice
+        quantity: matchedProduct.quantity + quantity,
+        buyingPrice: buyingPrice
       });
     } else {
       const data = {
         name: form.pName.value,
         sku: scannedSku || form.pSku.value,
         category: form.pCat.value,
-        quantity: parseInt(form.pQty.value),
-        buyingPrice: parseFloat(form.pBuyingPrice.value),
+        quantity: quantity,
+        buyingPrice: buyingPrice,
         price: parseFloat(form.pPrice.value),
         minThreshold: parseInt(form.pMin.value)
       };
-      if(editingProduct) onUpdate(editingProduct.id, data);
-      else onAdd({...data, storeId: currentStore.id});
+      
+      if(editingProduct) {
+        onUpdate(editingProduct.id, data);
+      } else {
+        onAdd({...data, storeId: currentStore.id});
+      }
+    }
+
+    // Common logic for both new and existing products if supplier is selected
+    if (supplier) {
+      // Log expense if paid amount > 0
+      if (paidAmount > 0) {
+        onAddExpense({
+          storeId: currentStore.id,
+          category: "Inventory Purchase",
+          amount: paidAmount,
+          description: `Paid to ${supplier.name} for stock`
+        });
+      }
+
+      // Update supplier due if due amount > 0
+      if (dueAmount > 0) {
+        onUpdateSupplierDue(supplier.id, dueAmount);
+      }
+
+      // Add purchase record
+      onAddPurchase({
+        poNumber: `${matchedProduct ? 'INV' : 'REG'}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`,
+        supplierId: supplier.id,
+        supplierName: supplier.name,
+        productId: matchedProduct?.id || 'NEW_ASSET',
+        productName: matchedProduct?.name || form.pName.value,
+        quantity: quantity,
+        unitCost: buyingPrice,
+        totalCost: totalCost,
+        amountPaid: paidAmount,
+        amountDue: dueAmount,
+        storeId: currentStore.id
+      });
     }
     
     setShowSuccessToast(true);
@@ -270,6 +348,12 @@ const Inventory: React.FC<InventoryProps> = ({
             <p className="text-slate-500 font-medium tracking-tight">Management for <span className="gold-gradient-text font-black">{currentStore.name}</span></p>
           </div>
           <div className="flex gap-3 flex-wrap items-center">
+            <button 
+              onClick={exportToCSV}
+              className="p-3 bg-slate-900 border border-slate-800 text-slate-400 rounded-2xl hover:text-white transition-all shadow-xl"
+            >
+              <Download className="w-5 h-5" />
+            </button>
             {currentUser.role !== UserRole.SALESMAN && (
               <>
                 <button onClick={() => setIsCategoryModalOpen(true)} className="bg-slate-900 border border-slate-800 text-slate-300 px-5 py-3 rounded-2xl font-bold flex items-center gap-2 hover:border-amber-400/50 transition-all shadow-xl">
@@ -496,6 +580,39 @@ const Inventory: React.FC<InventoryProps> = ({
                   {categories.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
                 {!matchedProduct && <ChevronDown className="absolute right-5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" />}
+              </div>
+            </div>
+
+            {/* Supplier Profile & To Be Paid */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2 flex items-center gap-1">
+                  <Truck className="w-3 h-3 text-amber-500" /> Supplier Profile
+                </label>
+                <div className="relative">
+                  <select 
+                    name="pSupplier" 
+                    className="w-full px-5 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 appearance-none"
+                  >
+                    <option value="">Select Supplier</option>
+                    {suppliers.filter(s => s.storeId === currentStore.id).map(s => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="absolute right-5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2 flex items-center gap-1">
+                  <DollarSign className="w-3 h-3 text-emerald-500" /> Paid Amount ($)
+                </label>
+                <input 
+                  name="pPaidAmount" 
+                  type="number" 
+                  step="0.01" 
+                  defaultValue={0}
+                  className="w-full px-5 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-emerald-400 font-black focus:border-amber-400" 
+                />
               </div>
             </div>
 

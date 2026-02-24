@@ -7,9 +7,14 @@ import Inventory from './components/Inventory';
 import Sales from './components/Sales';
 import Expenses from './components/Expenses';
 import Users from './components/Users';
+import Customers from './components/Customers';
+import Suppliers from './components/Suppliers';
+import Purchases from './components/Purchases';
+import Wastage from './components/Wastage';
 import Scanner from './components/Scanner';
 import Settings from './components/Settings';
-import { Store, Product, User, UserRole, Sale, Expense } from './types';
+import Login from './components/Login';
+import { Store, Product, User, UserRole, Sale, Expense, Customer, Supplier, Purchase, UserPermissions } from './types';
 import { INITIAL_STORES, INITIAL_PRODUCTS, INITIAL_USER, INITIAL_CATEGORIES } from './constants';
 
 const App: React.FC = () => {
@@ -68,6 +73,39 @@ const App: React.FC = () => {
     }
   });
 
+  const [customers, setCustomers] = useState<Customer[]>(() => {
+    try {
+      const saved = localStorage.getItem('omni_customers');
+      const parsed = saved ? JSON.parse(saved) : null;
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+      console.error("Failed to parse customers from localStorage", e);
+      return [];
+    }
+  });
+
+  const [suppliers, setSuppliers] = useState<Supplier[]>(() => {
+    try {
+      const saved = localStorage.getItem('omni_suppliers');
+      const parsed = saved ? JSON.parse(saved) : null;
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+      console.error("Failed to parse suppliers from localStorage", e);
+      return [];
+    }
+  });
+
+  const [purchases, setPurchases] = useState<Purchase[]>(() => {
+    try {
+      const saved = localStorage.getItem('omni_purchases');
+      const parsed = saved ? JSON.parse(saved) : null;
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+      console.error("Failed to parse purchases from localStorage", e);
+      return [];
+    }
+  });
+
   const [categories, setCategories] = useState<string[]>(() => {
     try {
       const saved = localStorage.getItem('omni_categories');
@@ -91,7 +129,18 @@ const App: React.FC = () => {
   });
 
   const [currentStore, setCurrentStore] = useState<Store>(() => stores[0] || INITIAL_STORES[0]);
-  const [currentUser, setCurrentUser] = useState<User>(() => users[0] || INITIAL_USER);
+  const [currentUser, setCurrentUser] = useState<User>(() => {
+    try {
+      const saved = localStorage.getItem('omni_current_user');
+      return saved ? JSON.parse(saved) : (users[0] || INITIAL_USER);
+    } catch {
+      return users[0] || INITIAL_USER;
+    }
+  });
+
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    return localStorage.getItem('omni_is_authenticated') === 'true';
+  });
 
   // Sync current store if assigned for Manager/Salesman
   useEffect(() => {
@@ -123,12 +172,32 @@ const App: React.FC = () => {
   }, [expenses]);
 
   useEffect(() => {
+    localStorage.setItem('omni_customers', JSON.stringify(customers));
+  }, [customers]);
+
+  useEffect(() => {
+    localStorage.setItem('omni_suppliers', JSON.stringify(suppliers));
+  }, [suppliers]);
+
+  useEffect(() => {
+    localStorage.setItem('omni_purchases', JSON.stringify(purchases));
+  }, [purchases]);
+
+  useEffect(() => {
     localStorage.setItem('omni_categories', JSON.stringify(categories));
   }, [categories]);
 
   useEffect(() => {
     localStorage.setItem('omni_expense_categories', JSON.stringify(expenseCategories));
   }, [expenseCategories]);
+
+  useEffect(() => {
+    localStorage.setItem('omni_is_authenticated', isAuthenticated.toString());
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    localStorage.setItem('omni_current_user', JSON.stringify(currentUser));
+  }, [currentUser]);
 
   const addProduct = useCallback((newProduct: Omit<Product, 'id' | 'lastUpdated'>) => {
     const p: Product = {
@@ -187,6 +256,59 @@ const App: React.FC = () => {
     }
   }, []);
 
+  const addCustomer = useCallback((customer: Omit<Customer, 'id'>) => {
+    const newCustomer: Customer = {
+      ...customer,
+      id: 'CUST-' + Math.random().toString(36).substr(2, 5).toUpperCase()
+    };
+    setCustomers(prev => [...prev, newCustomer]);
+  }, []);
+
+  const updateCustomer = useCallback((id: string, updates: Partial<Customer>) => {
+    setCustomers(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c));
+  }, []);
+
+  const deleteCustomer = useCallback((id: string) => {
+    setCustomers(prev => prev.filter(c => c.id !== id));
+  }, []);
+
+  const updateCustomerDue = useCallback((id: string, amount: number) => {
+    setCustomers(prev => prev.map(c => c.id === id ? { ...c, totalDue: c.totalDue + amount } : c));
+  }, []);
+
+  const addSupplier = useCallback((supplier: Omit<Supplier, 'id'>) => {
+    const newSupplier: Supplier = {
+      ...supplier,
+      id: 'SUPP-' + Math.random().toString(36).substr(2, 5).toUpperCase()
+    };
+    setSuppliers(prev => [...prev, newSupplier]);
+  }, []);
+
+  const updateSupplier = useCallback((id: string, updates: Partial<Supplier>) => {
+    setSuppliers(prev => prev.map(s => s.id === id ? { ...s, ...updates } : s));
+  }, []);
+
+  const deleteSupplier = useCallback((id: string) => {
+    setSuppliers(prev => prev.filter(s => s.id !== id));
+  }, []);
+
+  const updateSupplierDue = useCallback((id: string, amount: number) => {
+    setSuppliers(prev => prev.map(s => s.id === id ? { ...s, totalDue: s.totalDue + amount } : s));
+  }, []);
+
+  const addPurchase = useCallback((purchase: Omit<Purchase, 'id' | 'timestamp'>) => {
+    const newPurchase: Purchase = {
+      ...purchase,
+      id: Math.random().toString(36).substr(2, 9),
+      timestamp: new Date().toISOString()
+    };
+    setPurchases(prev => [newPurchase, ...prev]);
+  }, []);
+
+  const deletePurchase = useCallback((id: string) => {
+    setPurchases(prev => prev.filter(p => p.id !== id));
+  }, []);
+
   const addCategory = (name: string) => {
     if (!categories.includes(name)) {
       setCategories(prev => [...prev, name]);
@@ -226,18 +348,24 @@ const App: React.FC = () => {
     setExpenses(prev => prev.filter(e => e.storeId !== id));
   };
 
-  const checkPermission = (action: string) => {
+  const checkPermission = (action: keyof UserPermissions) => {
     if (currentUser.role === UserRole.SUPER_ADMIN) return true;
-    
-    switch(action) {
-      case 'VIEW_ANALYTICS': return currentUser.role === UserRole.MANAGER;
-      case 'MANAGE_USERS': return false;
-      case 'DELETE_DATA': return false;
-      case 'EDIT_PRICES': return currentUser.role === UserRole.MANAGER;
-      case 'EDIT_STORES': return false;
-      default: return true;
-    }
+    return currentUser.permissions?.[action] || false;
   };
+
+  const handleLogin = (user: User) => {
+    setCurrentUser(user);
+    setIsAuthenticated(true);
+  };
+
+  const handleLogout = () => {
+    setIsAuthenticated(false);
+    // We don't necessarily need to clear currentUser, but we can reset it to a default if we want
+  };
+
+  if (!isAuthenticated) {
+    return <Login users={users} onLogin={handleLogin} />;
+  }
 
   return (
     <HashRouter>
@@ -248,10 +376,12 @@ const App: React.FC = () => {
         onStoreChange={setCurrentStore}
         users={users}
         onUserChange={setCurrentUser}
+        products={products}
+        onLogout={handleLogout}
       >
         <Routes>
           <Route path="/" element={
-            checkPermission('VIEW_ANALYTICS') 
+            currentUser.role !== UserRole.SALESMAN
               ? <Dashboard products={products} currentStore={currentStore} sales={sales} expenses={expenses} />
               : <Navigate to="/inventory" replace />
           } />
@@ -260,6 +390,7 @@ const App: React.FC = () => {
             element={
               <Inventory 
                 products={products} 
+                suppliers={suppliers}
                 currentStore={currentStore} 
                 currentUser={currentUser}
                 categories={categories}
@@ -274,8 +405,10 @@ const App: React.FC = () => {
                 onDeleteExpense={deleteExpense}
                 onAddCategory={addCategory}
                 onRemoveCategory={removeCategory}
-                canEditPrices={checkPermission('EDIT_PRICES')}
-                canDelete={checkPermission('DELETE_DATA')}
+                onUpdateSupplierDue={updateSupplierDue}
+                onAddPurchase={addPurchase}
+                canEditPrices={checkPermission('inventory_edit')}
+                canDelete={checkPermission('inventory_delete')}
               />
             } 
           />
@@ -285,13 +418,64 @@ const App: React.FC = () => {
               <Sales 
                 sales={sales} 
                 products={products} 
+                customers={customers}
+                expenses={expenses}
                 currentStore={currentStore} 
                 currentUser={currentUser}
                 onAddSale={addSale}
                 onUpdateSale={updateSale}
                 onUpdateStock={updateProduct}
+                onUpdateCustomerDue={updateCustomerDue}
                 onDeleteSale={deleteSale}
-                canDelete={checkPermission('DELETE_DATA')}
+                canDelete={checkPermission('sales_delete')}
+              />
+            } 
+          />
+          <Route 
+            path="/customers" 
+            element={
+              <Customers 
+                customers={customers}
+                currentStore={currentStore}
+                onAddCustomer={addCustomer}
+                onUpdateCustomer={updateCustomer}
+                onDeleteCustomer={deleteCustomer}
+                onAddSale={addSale}
+                onUpdateCustomerDue={updateCustomerDue}
+                canEdit={checkPermission('customers_edit')}
+                canDelete={checkPermission('customers_delete')}
+              />
+            } 
+          />
+          <Route 
+            path="/suppliers" 
+            element={
+              <Suppliers 
+                suppliers={suppliers}
+                currentStore={currentStore}
+                onAddSupplier={addSupplier}
+                onUpdateSupplier={updateSupplier}
+                onDeleteSupplier={deleteSupplier}
+                onAddExpense={addExpense}
+                onUpdateSupplierDue={updateSupplierDue}
+                canEdit={checkPermission('suppliers_edit')}
+                canDelete={checkPermission('suppliers_delete')}
+              />
+            } 
+          />
+          <Route 
+            path="/purchases" 
+            element={
+              <Purchases 
+                purchases={purchases}
+                suppliers={suppliers}
+                products={products}
+                currentStore={currentStore}
+                onAddPurchase={addPurchase}
+                onUpdateStock={updateProduct}
+                onUpdateSupplierDue={updateSupplierDue}
+                onDeletePurchase={deletePurchase}
+                canDelete={checkPermission('purchase_delete')}
               />
             } 
           />
@@ -309,7 +493,22 @@ const App: React.FC = () => {
                     onDeleteExpense={deleteExpense}
                     onAddExpenseCategory={addExpenseCategory}
                     onRemoveExpenseCategory={removeExpenseCategory}
-                    canDelete={checkPermission('DELETE_DATA')}
+                    canEdit={checkPermission('expenses_edit')}
+                    canDelete={checkPermission('expenses_delete')}
+                  />
+                : <Navigate to="/inventory" replace />
+            } 
+          />
+          <Route 
+            path="/wastage" 
+            element={
+              currentUser.role !== UserRole.SALESMAN
+                ? <Wastage 
+                    products={products}
+                    currentStore={currentStore}
+                    expenses={expenses}
+                    onUpdateStock={updateProduct}
+                    onAddExpense={addExpense}
                   />
                 : <Navigate to="/inventory" replace />
             } 
@@ -317,7 +516,7 @@ const App: React.FC = () => {
           <Route 
             path="/users" 
             element={
-              checkPermission('MANAGE_USERS')
+              checkPermission('user_control_access')
                 ? <Users users={users} stores={stores} setUsers={setUsers} />
                 : <Navigate to="/" replace />
             } 
@@ -346,7 +545,7 @@ const App: React.FC = () => {
                 setCurrentUser={setCurrentUser}
                 setCurrentStore={setCurrentStore}
                 onDeleteStore={deleteStore}
-                canEditStores={checkPermission('EDIT_STORES')}
+                canEditStores={checkPermission('settings_access')}
               />
             } 
           />

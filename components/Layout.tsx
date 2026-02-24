@@ -1,5 +1,4 @@
-
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { 
   LayoutDashboard, 
@@ -19,9 +18,15 @@ import {
   Users as UsersIcon,
   X,
   Wallet,
-  LogOut
+  LogOut,
+  Users,
+  Truck,
+  AlertTriangle,
+  Trash2,
+  History
 } from 'lucide-react';
-import { User, Store, UserRole } from '../types';
+import { User, Store, UserRole, Product, UserPermissions } from '../types';
+import { motion, AnimatePresence } from 'framer-motion';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -29,8 +34,10 @@ interface LayoutProps {
   currentStore: Store;
   stores: Store[];
   users: User[];
+  products: Product[];
   onStoreChange: (store: Store) => void;
   onUserChange: (user: User) => void;
+  onLogout: () => void;
 }
 
 const Layout: React.FC<LayoutProps> = ({ 
@@ -39,25 +46,39 @@ const Layout: React.FC<LayoutProps> = ({
   currentStore, 
   stores, 
   users,
+  products,
   onStoreChange,
-  onUserChange
+  onUserChange,
+  onLogout
 }) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isStoreMenuOpen, setIsStoreMenuOpen] = useState(false);
-  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const [isNotificationOpen, setIsNotificationOpen] = useState(false);
   const location = useLocation();
 
   const isSuperAdmin = currentUser.role === UserRole.SUPER_ADMIN;
+
+  const lowStockProducts = useMemo(() => {
+    return products.filter(p => p.storeId === currentStore.id && p.quantity <= p.minThreshold);
+  }, [products, currentStore.id]);
 
   const navItems = [
     { name: 'Analytics', path: '/', icon: LayoutDashboard, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER] },
     { name: 'Inventory', path: '/inventory', icon: Package, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER, UserRole.SALESMAN] },
     { name: 'Sales', path: '/sales', icon: ShoppingCart, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER, UserRole.SALESMAN] },
+    { name: 'Purchases', path: '/purchases', icon: ShoppingBag, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER] },
+    { name: 'Customers', path: '/customers', icon: Users, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER, UserRole.SALESMAN] },
+    { name: 'Suppliers', path: '/suppliers', icon: Truck, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER] },
     { name: 'Log Expense', path: '/expenses', icon: Wallet, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER] },
+    { name: 'Wastage', path: '/wastage', icon: Trash2, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER] },
     { name: 'Scanner', path: '/scanner', icon: ScanLine, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER, UserRole.SALESMAN] },
-    { name: 'User Control', path: '/users', icon: UsersIcon, roles: [UserRole.SUPER_ADMIN] },
-    { name: 'Settings', path: '/settings', icon: Settings, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER, UserRole.SALESMAN] },
-  ].filter(item => item.roles.includes(currentUser.role));
+    { name: 'User Control', path: '/users', icon: UsersIcon, permission: 'user_control_access' as keyof UserPermissions, roles: [UserRole.SUPER_ADMIN] },
+    { name: 'Settings', path: '/settings', icon: Settings, permission: 'settings_access' as keyof UserPermissions, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER, UserRole.SALESMAN] },
+  ].filter(item => {
+    if (currentUser.role === UserRole.SUPER_ADMIN) return true;
+    if (item.permission && !currentUser.permissions?.[item.permission]) return false;
+    return item.roles.includes(currentUser.role);
+  });
 
   const closeSidebar = () => setIsSidebarOpen(false);
 
@@ -78,12 +99,14 @@ const Layout: React.FC<LayoutProps> = ({
       `}>
         <div className="h-full flex flex-col p-6">
           <div className="flex items-center justify-between mb-10">
-            <div className="flex items-center gap-3">
-              <div className="bg-gradient-to-br from-amber-400 to-amber-600 p-2.5 rounded-2xl shadow-lg shadow-amber-900/20">
-                <Warehouse className="text-slate-950 w-6 h-6" />
-              </div>
-              <span className="text-2xl font-extrabold gold-gradient-text tracking-tight italic">Ongona</span>
-            </div>
+            {/* এখানে আপনার সম্পূর্ণ লোগোটি বসানো হয়েছে */}
+            <Link to="/" onClick={closeSidebar} className="flex items-center justify-start group cursor-pointer">
+              <img 
+                src="/full-logo.png" 
+                alt="BDT - Buildings Developments & Technologies" 
+                className="w-auto h-16 object-contain group-hover:scale-105 transition-transform duration-300 drop-shadow-lg"
+              />
+            </Link>
             <button onClick={closeSidebar} className="lg:hidden text-slate-400 hover:text-white">
               <X className="w-6 h-6" />
             </button>
@@ -111,50 +134,28 @@ const Layout: React.FC<LayoutProps> = ({
             })}
           </nav>
 
-          <div className="pt-6 border-t border-slate-800/50">
-            <div className="bg-slate-800/40 rounded-2xl p-4 border border-slate-700/50 relative">
-              <button 
-                onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-                className="w-full flex items-center gap-3 mb-1 text-left group"
-              >
-                <div className="relative">
-                  <img src={currentUser.avatar} alt="" className="w-10 h-10 rounded-xl border border-slate-700 object-cover" />
-                  <div className="absolute -bottom-1 -right-1 w-3 h-3 bg-emerald-500 rounded-full border-2 border-slate-900"></div>
-                </div>
-                <div className="overflow-hidden flex-1">
-                  <p className="text-xs font-bold text-white truncate group-hover:text-amber-400 transition-colors">{currentUser.name}</p>
-                  <p className="text-[10px] text-amber-500 font-extrabold flex items-center gap-1 uppercase tracking-tighter">
-                    {currentUser.role === UserRole.SUPER_ADMIN ? <ShieldCheck className="w-3 h-3" /> : <ShieldOff className="w-3 h-3" />}
-                    {currentUser.role}
-                  </p>
-                </div>
-                <ChevronDown className={`w-3 h-3 text-slate-500 transition-transform ${isUserMenuOpen ? 'rotate-180' : ''}`} />
-              </button>
-
-              {isUserMenuOpen && (
-                <div className="absolute bottom-full left-0 w-full mb-2 bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl py-2 z-50 animate-in fade-in slide-in-from-bottom-2">
-                  <p className="px-4 py-1 text-[9px] font-black text-slate-500 uppercase tracking-widest border-b border-slate-800 mb-2">Switch Account</p>
-                  <div className="max-h-48 overflow-y-auto custom-scrollbar">
-                    {users.map(u => (
-                      <button
-                        key={u.id}
-                        onClick={() => {
-                          onUserChange(u);
-                          setIsUserMenuOpen(false);
-                        }}
-                        className={`w-full text-left px-4 py-2 text-xs flex items-center gap-2 transition-colors ${currentUser.id === u.id ? 'text-amber-400 font-bold bg-amber-400/5' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
-                      >
-                        <img src={u.avatar} className="w-5 h-5 rounded-md" />
-                        <div className="truncate">
-                          <div>{u.name}</div>
-                          <div className="text-[8px] opacity-60 uppercase">{u.role}</div>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
+          <div className="pt-6 border-t border-slate-800/50 space-y-4">
+            <div className="bg-slate-800/40 rounded-2xl p-4 border border-slate-700/50 flex items-center gap-3">
+              <div className="relative">
+                <img src={currentUser.avatar} alt="" className="w-10 h-10 rounded-xl border border-slate-700 object-cover" />
+                <div className="absolute -bottom-1 -right-1 w-3 h-3 bg-emerald-500 rounded-full border-2 border-slate-900"></div>
+              </div>
+              <div className="overflow-hidden flex-1">
+                <p className="text-xs font-bold text-white truncate">{currentUser.name}</p>
+                <p className="text-[10px] text-amber-500 font-extrabold flex items-center gap-1 uppercase tracking-tighter">
+                  {currentUser.role === UserRole.SUPER_ADMIN ? <ShieldCheck className="w-3 h-3" /> : <ShieldOff className="w-3 h-3" />}
+                  {currentUser.role}
+                </p>
+              </div>
             </div>
+
+            <button 
+              onClick={onLogout}
+              className="w-full flex items-center gap-3 px-5 py-4 rounded-2xl text-slate-400 hover:bg-rose-500/10 hover:text-rose-500 transition-all duration-300 group border border-transparent hover:border-rose-500/20"
+            >
+              <LogOut className="w-5 h-5 transition-transform group-hover:scale-110" />
+              <span className="text-sm font-bold tracking-wide">Log Out</span>
+            </button>
           </div>
         </div>
       </aside>
@@ -217,9 +218,68 @@ const Layout: React.FC<LayoutProps> = ({
                 )}
              </div>
 
-             <button className="p-2.5 bg-slate-900 border border-slate-800 rounded-2xl text-slate-400 hover:text-amber-400 transition-colors">
-                <Bell className="w-5 h-5" />
-             </button>
+             <div className="relative">
+                <button 
+                  onClick={() => setIsNotificationOpen(!isNotificationOpen)}
+                  className="p-2.5 bg-slate-900 border border-slate-800 rounded-2xl text-slate-400 hover:text-amber-400 transition-colors relative"
+                >
+                  <Bell className="w-5 h-5" />
+                  {lowStockProducts.length > 0 && (
+                    <span className="absolute top-2 right-2 w-2 h-2 bg-rose-500 rounded-full border-2 border-slate-950 animate-pulse"></span>
+                  )}
+                </button>
+                
+                <AnimatePresence>
+                  {isNotificationOpen && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setIsNotificationOpen(false)} />
+                      <motion.div 
+                        initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                        className="absolute right-0 mt-3 w-80 bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl z-50 py-4 overflow-hidden"
+                      >
+                        <div className="px-5 py-2 border-b border-slate-800 mb-2 flex items-center justify-between">
+                          <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">System Alerts</p>
+                          <span className="bg-rose-500/10 text-rose-500 text-[8px] px-2 py-0.5 rounded-full font-black uppercase tracking-widest">
+                            {lowStockProducts.length} Alerts
+                          </span>
+                        </div>
+                        
+                        <div className="max-h-96 overflow-y-auto custom-scrollbar">
+                          {lowStockProducts.length > 0 ? (
+                            lowStockProducts.map(p => (
+                              <div key={p.id} className="px-5 py-4 hover:bg-slate-800/50 transition-colors border-b border-slate-800/50 last:border-0">
+                                <div className="flex items-start gap-3">
+                                  <div className="p-2 bg-rose-500/10 rounded-xl text-rose-500 mt-1">
+                                    <AlertTriangle className="w-4 h-4" />
+                                  </div>
+                                  <div>
+                                    <p className="text-xs font-bold text-white mb-0.5">{p.name}</p>
+                                    <p className="text-[10px] text-slate-500 font-medium">Stock level critical: <span className="text-rose-400 font-black">{p.quantity} units</span> remaining.</p>
+                                    <Link 
+                                      to="/purchases" 
+                                      onClick={() => setIsNotificationOpen(false)}
+                                      className="text-[9px] text-amber-500 font-black uppercase tracking-widest mt-2 inline-block hover:underline"
+                                    >
+                                      Restock Now
+                                    </Link>
+                                  </div>
+                                </div>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="px-5 py-10 text-center opacity-30 grayscale">
+                              <Bell className="w-10 h-10 mx-auto text-slate-600 mb-3" />
+                              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">No active alerts</p>
+                            </div>
+                          )}
+                        </div>
+                      </motion.div>
+                    </>
+                  )}
+                </AnimatePresence>
+             </div>
           </div>
         </header>
 

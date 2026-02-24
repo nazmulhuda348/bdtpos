@@ -5,6 +5,21 @@ export enum UserRole {
   SALESMAN = 'SALESMAN'
 }
 
+export interface UserPermissions {
+  inventory_edit: boolean;
+  inventory_delete: boolean;
+  sales_delete: boolean;
+  purchase_delete: boolean;
+  customers_edit: boolean;
+  customers_delete: boolean;
+  suppliers_edit: boolean;
+  suppliers_delete: boolean;
+  expenses_edit: boolean;
+  expenses_delete: boolean;
+  user_control_access: boolean;
+  settings_access: boolean;
+}
+
 export interface User {
   id: string;
   name: string;
@@ -12,6 +27,7 @@ export interface User {
   avatar: string;
   assignedStoreId?: string; // Optional for Super Admin
   password?: string;
+  permissions?: UserPermissions;
 }
 
 export interface Store {
@@ -37,6 +53,7 @@ export interface Product {
 export interface Sale {
   id: string;
   invoiceId: string;
+  customerId?: string;
   customerName: string;
   productId: string;
   productName: string;
@@ -45,6 +62,8 @@ export interface Sale {
   unitPrice: number;
   discount: number;
   totalPrice: number;
+  amountPaid: number;
+  amountDue: number;
   timestamp: string;
   storeId: string;
 }
@@ -56,6 +75,40 @@ export interface Expense {
   amount: number;
   description: string;
   timestamp: string;
+}
+
+export interface Customer {
+  id: string;
+  name: string;
+  phone: string;
+  address: string;
+  totalDue: number;
+  storeId: string;
+}
+
+export interface Supplier {
+  id: string;
+  name: string;
+  phone: string;
+  address: string;
+  totalDue: number;
+  storeId: string;
+}
+
+export interface Purchase {
+  id: string;
+  poNumber: string;
+  supplierId: string;
+  supplierName: string;
+  productId: string;
+  productName: string;
+  quantity: number;
+  unitCost: number;
+  totalCost: number;
+  amountPaid: number;
+  amountDue: number;
+  timestamp: string;
+  storeId: string;
 }
 
 export interface InventoryStats {

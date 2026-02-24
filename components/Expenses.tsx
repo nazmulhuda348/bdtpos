@@ -17,7 +17,8 @@ import {
   DollarSign,
   Tag,
   ClipboardList,
-  Settings
+  Settings,
+  Download
 } from 'lucide-react';
 
 interface ExpensesProps {
@@ -30,6 +31,7 @@ interface ExpensesProps {
   onDeleteExpense: (id: string) => void;
   onAddExpenseCategory: (name: string) => void;
   onRemoveExpenseCategory: (name: string) => void;
+  canEdit: boolean;
   canDelete: boolean;
 }
 
@@ -43,6 +45,7 @@ const Expenses: React.FC<ExpensesProps> = ({
   onDeleteExpense,
   onAddExpenseCategory,
   onRemoveExpenseCategory,
+  canEdit,
   canDelete
 }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -93,6 +96,27 @@ const Expenses: React.FC<ExpensesProps> = ({
     setIsModalOpen(true);
   };
 
+  const exportToCSV = () => {
+    const headers = ['Category', 'Description', 'Amount', 'Date'];
+    const data = filteredExpenses.map(e => [
+      e.category,
+      e.description.replace(/,/g, ';'),
+      e.amount.toFixed(2),
+      new Date(e.timestamp).toLocaleDateString()
+    ]);
+    
+    const csvContent = [headers, ...data].map(e => e.join(",")).join("\n");
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    link.setAttribute("download", `expenses_${currentStore.name.replace(/\s+/g, '_')}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   const handleAddCategory = () => {
     if (newCatName.trim()) {
       onAddExpenseCategory(newCatName.trim());
@@ -113,19 +137,27 @@ const Expenses: React.FC<ExpensesProps> = ({
         </div>
         <div className="flex gap-3">
           <button 
+            onClick={exportToCSV}
+            className="p-4 bg-slate-900 border border-slate-800 text-slate-400 rounded-2xl hover:text-white transition-all shadow-xl"
+          >
+            <Download className="w-5 h-5" />
+          </button>
+          <button 
             onClick={() => setIsCategoryModalOpen(true)}
             className="bg-slate-900 border border-slate-800 text-slate-300 px-5 py-4 rounded-2xl font-bold flex items-center gap-2 hover:border-rose-500/50 transition-all shadow-xl"
           >
             <Tag className="w-4 h-4 text-rose-500" />
             <span className="hidden md:inline uppercase tracking-widest text-[10px]">Manage Categories</span>
           </button>
-          <button 
-            onClick={() => { setEditingExpense(null); setIsModalOpen(true); }}
-            className="bg-rose-500 text-white px-6 py-4 rounded-2xl font-black flex items-center gap-3 hover:scale-[1.02] hover:bg-rose-600 transition-all shadow-xl shadow-rose-900/20 uppercase tracking-widest text-xs"
-          >
-            <Plus className="w-5 h-5 stroke-[3px]" />
-            Log New Expense
-          </button>
+          {canEdit && (
+            <button 
+              onClick={() => { setEditingExpense(null); setIsModalOpen(true); }}
+              className="bg-rose-500 text-white px-6 py-4 rounded-2xl font-black flex items-center gap-3 hover:scale-[1.02] hover:bg-rose-600 transition-all shadow-xl shadow-rose-900/20 uppercase tracking-widest text-xs"
+            >
+              <Plus className="w-5 h-5 stroke-[3px]" />
+              Log New Expense
+            </button>
+          )}
         </div>
       </div>
 
@@ -223,12 +255,14 @@ const Expenses: React.FC<ExpensesProps> = ({
                   </td>
                   <td className="px-6 py-5 text-right">
                     <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button 
-                        onClick={() => handleEdit(e)}
-                        className="p-2.5 text-slate-500 hover:text-white hover:bg-slate-800 rounded-xl transition-all"
-                      >
-                        <Edit2 className="w-4 h-4" />
-                      </button>
+                      {canEdit && (
+                        <button 
+                          onClick={() => handleEdit(e)}
+                          className="p-2.5 text-slate-500 hover:text-white hover:bg-slate-800 rounded-xl transition-all"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                      )}
                       {canDelete && (
                         <button 
                           onClick={() => onDeleteExpense(e.id)}

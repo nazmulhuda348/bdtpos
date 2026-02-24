@@ -1,5 +1,5 @@
 {
-  "name": "ongona",
+  "name": "bdt",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -11,11 +11,13 @@
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.2.0",
+    "framer-motion": "^12.34.3",
     "lucide-react": "^0.563.0",
     "react": "^19.2.4",
     "react-barcode": "^1.5.3",
     "react-dom": "^19.2.4",
     "react-router-dom": "^7.13.0",
+    "recharts": "^3.7.0",
     "tailwindcss": "^4.2.0"
   },
   "devDependencies": {

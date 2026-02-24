@@ -1,6 +1,6 @@
 
-import React, { useState } from 'react';
-import { User, Store, UserRole } from '../types';
+import React, { useState, useEffect } from 'react';
+import { User, Store, UserRole, UserPermissions } from '../types';
 import { 
   Users as UsersIcon, 
   Plus, 
@@ -12,7 +12,9 @@ import {
   UserPlus,
   Eye,
   EyeOff,
-  AlertCircle
+  AlertCircle,
+  Edit2,
+  Check
 } from 'lucide-react';
 
 interface UsersProps {
@@ -21,17 +23,85 @@ interface UsersProps {
   setUsers: React.Dispatch<React.SetStateAction<User[]>>;
 }
 
+const PERMISSION_LIST: { key: keyof UserPermissions; label: string }[] = [
+  { key: 'inventory_edit', label: 'Inventory: Edit' },
+  { key: 'inventory_delete', label: 'Inventory: Delete' },
+  { key: 'sales_delete', label: 'Sales: Delete' },
+  { key: 'purchase_delete', label: 'Purchase: Delete' },
+  { key: 'customers_edit', label: 'Customers: Edit' },
+  { key: 'customers_delete', label: 'Customers: Delete' },
+  { key: 'suppliers_edit', label: 'Suppliers: Edit' },
+  { key: 'suppliers_delete', label: 'Suppliers: Delete' },
+  { key: 'expenses_edit', label: 'Expenses: Edit' },
+  { key: 'expenses_delete', label: 'Expenses: Delete' },
+  { key: 'user_control_access', label: 'User Control: Access' },
+  { key: 'settings_access', label: 'Settings: Access' },
+];
+
+const DEFAULT_PERMISSIONS: UserPermissions = {
+  inventory_edit: false,
+  inventory_delete: false,
+  sales_delete: false,
+  purchase_delete: false,
+  customers_edit: false,
+  customers_delete: false,
+  suppliers_edit: false,
+  suppliers_delete: false,
+  expenses_edit: false,
+  expenses_delete: false,
+  user_control_access: false,
+  settings_access: false,
+};
+
+const FULL_PERMISSIONS: UserPermissions = {
+  inventory_edit: true,
+  inventory_delete: true,
+  sales_delete: true,
+  purchase_delete: true,
+  customers_edit: true,
+  customers_delete: true,
+  suppliers_edit: true,
+  suppliers_delete: true,
+  expenses_edit: true,
+  expenses_delete: true,
+  user_control_access: true,
+  settings_access: true,
+};
+
 const Users: React.FC<UsersProps> = ({ users, stores, setUsers }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState<User | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [selectedRole, setSelectedRole] = useState<UserRole>(UserRole.SALESMAN);
+  const [permissions, setPermissions] = useState<UserPermissions>(DEFAULT_PERMISSIONS);
+
+  useEffect(() => {
+    if (selectedRole === UserRole.SUPER_ADMIN) {
+      setPermissions(FULL_PERMISSIONS);
+    }
+  }, [selectedRole]);
 
   const filteredUsers = users.filter(u => 
     u.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
     u.role.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const handleAddUser = (e: React.FormEvent) => {
+  const handleOpenAddModal = () => {
+    setEditingUser(null);
+    setSelectedRole(UserRole.SALESMAN);
+    setPermissions(DEFAULT_PERMISSIONS);
+    setIsModalOpen(true);
+  };
+
+  const handleOpenEditModal = (user: User) => {
+    setEditingUser(user);
+    setSelectedRole(user.role);
+    setPermissions(user.permissions || (user.role === UserRole.SUPER_ADMIN ? FULL_PERMISSIONS : DEFAULT_PERMISSIONS));
+    setIsModalOpen(true);
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const form = e.target as HTMLFormElement;
     const name = form.userName.value;
@@ -39,18 +109,36 @@ const Users: React.FC<UsersProps> = ({ users, stores, setUsers }) => {
     const assignedStoreId = form.userStore.value;
     const password = form.userPass.value;
 
-    const newUser: User = {
-      id: `u-${Date.now()}`,
-      name,
-      role,
-      avatar: `https://picsum.photos/seed/${name}/200`,
-      assignedStoreId: role === UserRole.SUPER_ADMIN ? undefined : assignedStoreId,
-      password
-    };
+    if (editingUser) {
+      setUsers(prev => prev.map(u => u.id === editingUser.id ? {
+        ...u,
+        name,
+        role,
+        assignedStoreId: role === UserRole.SUPER_ADMIN ? undefined : assignedStoreId,
+        password,
+        permissions: role === UserRole.SUPER_ADMIN ? FULL_PERMISSIONS : permissions
+      } : u));
+      alert('Identity Synchronized: Personnel credentials updated.');
+    } else {
+      const newUser: User = {
+        id: `u-${Date.now()}`,
+        name,
+        role,
+        avatar: `https://picsum.photos/seed/${name}/200`,
+        assignedStoreId: role === UserRole.SUPER_ADMIN ? undefined : assignedStoreId,
+        password,
+        permissions: role === UserRole.SUPER_ADMIN ? FULL_PERMISSIONS : permissions
+      };
+      setUsers(prev => [...prev, newUser]);
+      alert('Access Provisioned: New identity synchronized to global directory.');
+    }
 
-    setUsers(prev => [...prev, newUser]);
     setIsModalOpen(false);
-    alert('Access Provisioned: New identity synchronized to global directory.');
+  };
+
+  const togglePermission = (key: keyof UserPermissions) => {
+    if (selectedRole === UserRole.SUPER_ADMIN) return;
+    setPermissions(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
   const removeUser = (id: string) => {
@@ -72,7 +160,7 @@ const Users: React.FC<UsersProps> = ({ users, stores, setUsers }) => {
           <p className="text-slate-500 font-medium">Global access directory and branch assignments</p>
         </div>
         <button 
-          onClick={() => setIsModalOpen(true)}
+          onClick={handleOpenAddModal}
           className="bg-gradient-to-r from-amber-400 to-amber-600 text-slate-950 px-6 py-4 rounded-2xl font-black flex items-center gap-3 hover:scale-[1.02] transition-all shadow-xl shadow-amber-900/10 uppercase tracking-widest text-xs"
         >
           <UserPlus className="w-5 h-5 stroke-[3px]" />
@@ -125,9 +213,12 @@ const Users: React.FC<UsersProps> = ({ users, stores, setUsers }) => {
                       <Shield className={`w-4 h-4 ${user.role === UserRole.SUPER_ADMIN ? 'text-amber-500' : 'text-slate-600'}`} />
                       <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Clearance Lvl {user.role === UserRole.SUPER_ADMIN ? '3' : user.role === UserRole.MANAGER ? '2' : '1'}</span>
                     </div>
-                    {user.id !== 'u-1' && (
-                      <button onClick={() => removeUser(user.id)} className="p-2.5 text-slate-600 hover:text-rose-500 hover:bg-rose-500/10 rounded-xl transition-all"><Trash2 className="w-4 h-4" /></button>
-                    )}
+                    <div className="flex items-center gap-1">
+                      <button onClick={() => handleOpenEditModal(user)} className="p-2.5 text-slate-600 hover:text-amber-400 hover:bg-amber-400/10 rounded-xl transition-all"><Edit2 className="w-4 h-4" /></button>
+                      {user.id !== 'u-1' && (
+                        <button onClick={() => removeUser(user.id)} className="p-2.5 text-slate-600 hover:text-rose-500 hover:bg-rose-500/10 rounded-xl transition-all"><Trash2 className="w-4 h-4" /></button>
+                      )}
+                    </div>
                   </div>
                </div>
             </div>
@@ -137,52 +228,89 @@ const Users: React.FC<UsersProps> = ({ users, stores, setUsers }) => {
 
       {/* Provisioning Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
-          <div className="bg-slate-900 w-full max-w-lg rounded-[2.5rem] border border-slate-800 shadow-2xl p-8 relative animate-in zoom-in-95 duration-300">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md overflow-y-auto">
+          <div className="bg-slate-900 w-full max-w-2xl rounded-[2.5rem] border border-slate-800 shadow-2xl p-8 my-8 relative animate-in zoom-in-95 duration-300">
              <button onClick={() => setIsModalOpen(false)} className="absolute top-6 right-6 text-slate-500 hover:text-white transition-colors"><X className="w-6 h-6" /></button>
-             <h2 className="text-2xl font-black text-white mb-2 tracking-tight">Identity Provisioning</h2>
+             <h2 className="text-2xl font-black text-white mb-2 tracking-tight">{editingUser ? 'Identity Modification' : 'Identity Provisioning'}</h2>
              <p className="text-slate-500 text-xs font-bold mb-8 uppercase tracking-[0.2em]">Configure Personnel Access Rights</p>
              
-             <form onSubmit={handleAddUser} className="space-y-6">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Legal Nomenclature</label>
-                  <input name="userName" required placeholder="Full Operational Name" className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 amber-glow" />
-                </div>
+             <form onSubmit={handleSubmit} className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-6">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Legal Nomenclature</label>
+                      <input name="userName" required defaultValue={editingUser?.name} placeholder="Full Operational Name" className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 amber-glow" />
+                    </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Protocol Role</label>
-                    <select name="userRole" className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 amber-glow appearance-none">
-                      <option value={UserRole.SALESMAN}>Salesman</option>
-                      <option value={UserRole.MANAGER}>Store Manager</option>
-                      <option value={UserRole.SUPER_ADMIN}>Super Admin</option>
-                    </select>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Protocol Role</label>
+                        <select 
+                          name="userRole" 
+                          value={selectedRole}
+                          onChange={(e) => setSelectedRole(e.target.value as UserRole)}
+                          className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 amber-glow appearance-none"
+                        >
+                          <option value={UserRole.SALESMAN}>Salesman</option>
+                          <option value={UserRole.MANAGER}>Store Manager</option>
+                          <option value={UserRole.SUPER_ADMIN}>Super Admin</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Site Assignment</label>
+                        <select name="userStore" defaultValue={editingUser?.assignedStoreId} className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 amber-glow appearance-none">
+                          <option value="">Global/No Branch</option>
+                          {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Authentication Key</label>
+                      <div className="relative">
+                        <input name="userPass" required defaultValue={editingUser?.password} type={showPassword ? "text" : "password"} placeholder="Secure Access String" className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 amber-glow" />
+                        <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-5 top-4 text-slate-600 hover:text-amber-400 transition-colors">
+                          {showPassword ? <EyeOff className="w-6 h-6" /> : <Eye className="w-6 h-6" />}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="bg-amber-400/5 p-4 rounded-2xl border border-amber-400/10 flex gap-3">
+                      <AlertCircle className="w-5 h-5 text-amber-500 shrink-0" />
+                      <p className="text-[10px] text-slate-400 font-medium">Assigned Managers and Salesmen will be restricted to viewing and managing data strictly within their designated Site Hub.</p>
+                    </div>
                   </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Site Assignment</label>
-                    <select name="userStore" className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 amber-glow appearance-none">
-                      <option value="">Global/No Branch</option>
-                      {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                    </select>
+
+                  <div className="space-y-4">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Granular Permissions</label>
+                    <div className="bg-slate-800/50 border border-slate-700 rounded-3xl p-6 grid grid-cols-1 gap-3 max-h-[400px] overflow-y-auto custom-scrollbar">
+                      {PERMISSION_LIST.map((perm) => (
+                        <button
+                          key={perm.key}
+                          type="button"
+                          disabled={selectedRole === UserRole.SUPER_ADMIN}
+                          onClick={() => togglePermission(perm.key)}
+                          className={`flex items-center justify-between p-3 rounded-xl border transition-all ${
+                            permissions[perm.key] 
+                              ? 'bg-amber-400/10 border-amber-400/30 text-amber-400' 
+                              : 'bg-slate-900/50 border-slate-800 text-slate-500 hover:border-slate-700'
+                          } ${selectedRole === UserRole.SUPER_ADMIN ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        >
+                          <span className="text-[10px] font-black uppercase tracking-widest">{perm.label}</span>
+                          <div className={`w-5 h-5 rounded-md border flex items-center justify-center transition-all ${
+                            permissions[perm.key] ? 'bg-amber-400 border-amber-400 text-slate-950' : 'border-slate-700'
+                          }`}>
+                            {permissions[perm.key] && <Check className="w-3.5 h-3.5 stroke-[4px]" />}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Authentication Key</label>
-                  <div className="relative">
-                    <input name="userPass" required type={showPassword ? "text" : "password"} placeholder="Secure Access String" className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 amber-glow" />
-                    <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-5 top-4 text-slate-600 hover:text-amber-400 transition-colors">
-                      {showPassword ? <EyeOff className="w-6 h-6" /> : <Eye className="w-6 h-6" />}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="bg-amber-400/5 p-4 rounded-2xl border border-amber-400/10 flex gap-3">
-                  <AlertCircle className="w-5 h-5 text-amber-500 shrink-0" />
-                  <p className="text-[10px] text-slate-400 font-medium">Assigned Managers and Salesmen will be restricted to viewing and managing data strictly within their designated Site Hub.</p>
-                </div>
-
-                <button type="submit" className="w-full bg-gradient-to-r from-amber-400 to-amber-600 text-slate-950 py-5 rounded-[2rem] font-black shadow-xl shadow-amber-900/20 hover:scale-[1.02] transition-transform uppercase tracking-widest text-xs">Execute Authorization</button>
+                <button type="submit" className="w-full bg-gradient-to-r from-amber-400 to-amber-600 text-slate-950 py-5 rounded-[2rem] font-black shadow-xl shadow-amber-900/20 hover:scale-[1.02] transition-transform uppercase tracking-widest text-xs">
+                  {editingUser ? 'Synchronize Credentials' : 'Execute Authorization'}
+                </button>
              </form>
           </div>
         </div>

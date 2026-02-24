@@ -17,9 +17,9 @@ export const INITIAL_PRODUCTS: Product[] = [
 
 export const INITIAL_USER: User = {
   id: 'u-1',
-  name: 'Alex Johnson',
+  name: 'admin',
   role: UserRole.SUPER_ADMIN,
-  avatar: 'https://picsum.photos/seed/alex/200',
+  avatar: 'https://picsum.photos/seed/admin/200',
   password: 'admin'
 };
 
