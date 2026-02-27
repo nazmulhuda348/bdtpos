@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo } from 'react';
 import { Expense, Store, User, UserRole } from '../types';
 import { 
@@ -26,9 +25,9 @@ interface ExpensesProps {
   currentStore: Store;
   currentUser: User;
   expenseCategories: string[];
-  onAddExpense: (expense: Omit<Expense, 'id' | 'timestamp'>) => void;
-  onUpdateExpense: (id: string, updates: Partial<Expense>) => void;
-  onDeleteExpense: (id: string) => void;
+  onAddExpense: (expense: Omit<Expense, 'id' | 'timestamp'>) => void | Promise<void>;
+  onUpdateExpense: (id: string, updates: Partial<Expense>) => void | Promise<void>;
+  onDeleteExpense: (id: string) => void | Promise<void>;
   onAddExpenseCategory: (name: string) => void;
   onRemoveExpenseCategory: (name: string) => void;
   canEdit: boolean;
@@ -55,6 +54,7 @@ const Expenses: React.FC<ExpensesProps> = ({
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [newCatName, setNewCatName] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
 
   const filteredExpenses = useMemo(() => {
     return expenses
@@ -71,29 +71,51 @@ const Expenses: React.FC<ExpensesProps> = ({
     return filteredExpenses.reduce((sum, e) => sum + e.amount, 0);
   }, [filteredExpenses]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const form = e.target as HTMLFormElement;
-    const data = {
-      storeId: currentStore.id,
-      category: form.expCat.value,
-      amount: parseFloat(form.expAmount.value),
-      description: form.expDesc.value
-    };
+    setIsLoading(true);
 
-    if (editingExpense) {
-      onUpdateExpense(editingExpense.id, data);
-    } else {
-      onAddExpense(data);
+    try {
+      const form = e.target as HTMLFormElement;
+      const data = {
+        storeId: currentStore.id,
+        category: form.expCat.value,
+        amount: parseFloat(form.expAmount.value),
+        description: form.expDesc.value
+      };
+
+      if (editingExpense) {
+        // ডাটাবেসে আপডেট হওয়ার জন্য অপেক্ষা করবে
+        await onUpdateExpense(editingExpense.id, data);
+        alert('Update Success: Financial record modified.');
+      } else {
+        // ডাটাবেসে নতুন ডাটা সেভ হওয়ার জন্য অপেক্ষা করবে
+        await onAddExpense(data);
+        alert('Settlement Logged: Expense successfully recorded.');
+      }
+
+      setIsModalOpen(false);
+      setEditingExpense(null);
+    } catch (error: any) {
+      alert(`Operation failed: ${error.message}`);
+    } finally {
+      setIsLoading(false);
     }
-
-    setIsModalOpen(false);
-    setEditingExpense(null);
   };
 
   const handleEdit = (expense: Expense) => {
     setEditingExpense(expense);
     setIsModalOpen(true);
+  };
+
+  const handleDelete = async (id: string) => {
+    if (window.confirm("Are you sure you want to permanently delete this expenditure?")) {
+      try {
+        await onDeleteExpense(id);
+      } catch (error: any) {
+        alert(`Delete failed: ${error.message}`);
+      }
+    }
   };
 
   const exportToCSV = () => {
@@ -265,7 +287,7 @@ const Expenses: React.FC<ExpensesProps> = ({
                       )}
                       {canDelete && (
                         <button 
-                          onClick={() => onDeleteExpense(e.id)}
+                          onClick={() => handleDelete(e.id)}
                           className="p-2.5 text-slate-500 hover:text-rose-500 hover:bg-rose-500/10 rounded-xl transition-all"
                         >
                           <Trash2 className="w-4 h-4" />
@@ -401,9 +423,11 @@ const Expenses: React.FC<ExpensesProps> = ({
 
                 <button 
                   type="submit" 
-                  className="w-full bg-rose-500 text-white py-5 rounded-[2rem] font-black shadow-2xl shadow-rose-900/20 hover:scale-[1.02] transition-transform flex items-center justify-center gap-3 uppercase tracking-[0.2em] text-xs"
+                  disabled={isLoading}
+                  className="w-full bg-rose-500 text-white py-5 rounded-[2rem] font-black shadow-2xl shadow-rose-900/20 hover:scale-[1.02] transition-transform flex items-center justify-center gap-3 uppercase tracking-[0.2em] text-xs disabled:opacity-50"
                 >
-                  {editingExpense ? 'Authorize Modification' : 'Authorize Settlement'} <ArrowRight className="w-5 h-5" />
+                  {isLoading ? 'Processing...' : (editingExpense ? 'Authorize Modification' : 'Authorize Settlement')} 
+                  {!isLoading && <ArrowRight className="w-5 h-5" />}
                 </button>
              </form>
           </div>

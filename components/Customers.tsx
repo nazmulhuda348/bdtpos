@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo } from 'react';
 import { Customer, Store, User, Sale } from '../types';
 import { 
@@ -11,18 +10,19 @@ import {
   Trash2, 
   Edit2,
   Download,
-  UserPlus
+  UserPlus,
+  X // lucide-react থেকে X ইমপোর্ট করা হয়েছে
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface CustomersProps {
   customers: Customer[];
   currentStore: Store;
-  onAddCustomer: (customer: Omit<Customer, 'id'>) => void;
-  onUpdateCustomer: (id: string, updates: Partial<Customer>) => void;
-  onDeleteCustomer: (id: string) => void;
-  onAddSale: (sale: Omit<Sale, 'id' | 'timestamp'>) => void;
-  onUpdateCustomerDue: (id: string, amount: number) => void;
+  onAddCustomer: (customer: Omit<Customer, 'id'>) => void | Promise<void>;
+  onUpdateCustomer: (id: string, updates: Partial<Customer>) => void | Promise<void>;
+  onDeleteCustomer: (id: string) => void | Promise<void>;
+  onAddSale: (sale: Omit<Sale, 'id' | 'timestamp'>) => void | Promise<void>;
+  onUpdateCustomerDue: (id: string, amount: number) => void | Promise<void>;
   canEdit: boolean;
   canDelete: boolean;
 }
@@ -43,6 +43,7 @@ const Customers: React.FC<CustomersProps> = ({
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [isLoading, setIsLoading] = useState(false); // লোডিং স্টেট যুক্ত করা হয়েছে
 
   // Form State
   const [name, setName] = useState('');
@@ -63,49 +64,69 @@ const Customers: React.FC<CustomersProps> = ({
     return filteredCustomers.reduce((acc, curr) => acc + curr.totalDue, 0);
   }, [filteredCustomers]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (editingCustomer) {
-      onUpdateCustomer(editingCustomer.id, { name, phone, address });
-    } else {
-      onAddCustomer({
-        name,
-        phone,
-        address,
-        totalDue: 0,
-        storeId: currentStore.id
-      });
+    setIsLoading(true);
+
+    try {
+      if (editingCustomer) {
+        await onUpdateCustomer(editingCustomer.id, { name, phone, address });
+        alert('Update Success: Customer profile modified.');
+      } else {
+        await onAddCustomer({
+          name,
+          phone,
+          address,
+          totalDue: 0,
+          storeId: currentStore.id
+        });
+        alert('Registration Success: New customer profile synchronized.');
+      }
+      resetForm();
+    } catch (error: any) {
+      alert(`Operation failed: ${error.message}`);
+    } finally {
+      setIsLoading(false);
     }
-    resetForm();
   };
 
-  const handleReceivePayment = (e: React.FormEvent) => {
+  const handleReceivePayment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedCustomer || paymentAmount <= 0) return;
 
-    // Log the payment as a sale entry
-    onAddSale({
-      invoiceId: `PAY-${Date.now().toString().slice(-6)}`,
-      customerId: selectedCustomer.id,
-      customerName: selectedCustomer.name,
-      productId: 'PAYMENT_RECEIVED',
-      productName: 'Due Payment Received',
-      quantity: 1,
-      buyingPrice: 0,
-      unitPrice: paymentAmount,
-      discount: 0,
-      totalPrice: paymentAmount,
-      amountPaid: paymentAmount,
-      amountDue: 0,
-      storeId: currentStore.id
-    });
+    setIsLoading(true);
 
-    // Update customer due
-    onUpdateCustomerDue(selectedCustomer.id, -paymentAmount);
+    try {
+      // পেমেন্টকে একটি বিক্রয় এন্ট্রি হিসেবে ডাটাবেসে পাঠানো হচ্ছে
+      // productId কে null দেওয়া হয়েছে কারণ এটি কোনো ফিজিক্যাল প্রোডাক্ট নয়
+      await onAddSale({
+        invoiceId: `PAY-${Date.now().toString().slice(-6)}`,
+        customerId: selectedCustomer.id,
+        customerName: selectedCustomer.name,
+        productId: null as unknown as string, // UUID এরর এড়াতে null পাঠানো হচ্ছে
+        productName: 'Due Payment Received',
+        quantity: 1,
+        buyingPrice: 0,
+        unitPrice: paymentAmount,
+        discount: 0,
+        totalPrice: paymentAmount,
+        amountPaid: paymentAmount,
+        amountDue: 0,
+        storeId: currentStore.id
+      });
 
-    setIsPaymentModalOpen(false);
-    setSelectedCustomer(null);
-    setPaymentAmount(0);
+      // কাস্টমারের বকেয়া আপডেট করা হচ্ছে
+      await onUpdateCustomerDue(selectedCustomer.id, -paymentAmount);
+
+      alert(`Payment Successful: $${paymentAmount} received from ${selectedCustomer.name}`);
+      setIsPaymentModalOpen(false);
+      setSelectedCustomer(null);
+      setPaymentAmount(0);
+    } catch (error: any) {
+      alert(`Payment recording failed: ${error.message}`);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const resetForm = () => {
@@ -180,9 +201,10 @@ const Customers: React.FC<CustomersProps> = ({
         </div>
       </div>
 
+      {/* Overview Stats */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 flex items-center gap-6">
-          <div className="w-14 h-14 bg-amber-400/10 rounded-2xl flex items-center justify-center text-amber-400">
+        <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 flex items-center gap-6 group hover:border-amber-400/30 transition-all">
+          <div className="w-14 h-14 bg-amber-400/10 rounded-2xl flex items-center justify-center text-amber-400 group-hover:scale-110 transition-transform">
             <Users className="w-7 h-7" />
           </div>
           <div>
@@ -190,13 +212,13 @@ const Customers: React.FC<CustomersProps> = ({
             <h3 className="text-2xl font-black text-white">{filteredCustomers.length}</h3>
           </div>
         </div>
-        <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 flex items-center gap-6">
-          <div className="w-14 h-14 bg-rose-400/10 rounded-2xl flex items-center justify-center text-rose-400">
+        <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 flex items-center gap-6 group hover:border-rose-400/30 transition-all">
+          <div className="w-14 h-14 bg-rose-400/10 rounded-2xl flex items-center justify-center text-rose-400 group-hover:scale-110 transition-transform">
             <DollarSign className="w-7 h-7" />
           </div>
           <div>
             <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Total Outstanding</p>
-            <h3 className="text-2xl font-black text-rose-400">${totalDues.toFixed(2)}</h3>
+            <h3 className="text-2xl font-black text-rose-400">${totalDues.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3>
           </div>
         </div>
       </div>
@@ -229,7 +251,7 @@ const Customers: React.FC<CustomersProps> = ({
                 <tr key={customer.id} className="group hover:bg-slate-800/40 transition-all">
                   <td className="px-6 py-5">
                     <p className="font-black text-white text-sm">{customer.name}</p>
-                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-tighter">ID: {customer.id}</p>
+                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-tighter">Ref: {customer.id.substring(0, 8)}</p>
                   </td>
                   <td className="px-6 py-5">
                     <div className="flex items-center gap-2 text-slate-300 text-sm">
@@ -268,7 +290,7 @@ const Customers: React.FC<CustomersProps> = ({
                       )}
                       {canDelete && (
                         <button 
-                          onClick={() => onDeleteCustomer(customer.id)}
+                          onClick={() => { if(window.confirm('Erase profile? History remains in sales.')) onDeleteCustomer(customer.id); }}
                           className="p-2 text-slate-600 hover:text-rose-500 transition-colors"
                         >
                           <Trash2 className="w-4 h-4" />
@@ -278,139 +300,66 @@ const Customers: React.FC<CustomersProps> = ({
                   </td>
                 </tr>
               ))}
-              {filteredCustomers.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="px-6 py-20 text-center opacity-30 grayscale">
-                    <Users className="w-12 h-12 mx-auto text-slate-600 mb-4" />
-                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">No customers found</p>
-                  </td>
-                </tr>
-              )}
             </tbody>
           </table>
         </div>
       </div>
 
       <AnimatePresence>
+        {/* Customer Add/Edit Modal */}
         {isModalOpen && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={resetForm}
-              className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
-            />
-            <motion.div 
-              initial={{ scale: 0.9, opacity: 0, y: 20 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.9, opacity: 0, y: 20 }}
-              className="relative w-full max-w-lg bg-slate-900 border border-slate-800 rounded-[2.5rem] shadow-2xl p-8 overflow-hidden"
-            >
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={resetForm} className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm" />
+            <motion.div initial={{ scale: 0.9, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.9, opacity: 0, y: 20 }} className="relative w-full max-w-lg bg-slate-900 border border-slate-800 rounded-[2.5rem] shadow-2xl p-8 overflow-hidden">
               <div className="flex items-center justify-between mb-8">
-                <h2 className="text-2xl font-black text-white tracking-tight uppercase">
-                  {editingCustomer ? 'Edit Customer' : 'Add New Customer'}
-                </h2>
-                <button onClick={resetForm} className="p-2 text-slate-500 hover:text-white transition-colors">
-                  <Trash2 className="w-6 h-6 rotate-45" />
-                </button>
+                <h2 className="text-2xl font-black text-white tracking-tight uppercase">{editingCustomer ? 'Edit Profile' : 'Add Customer'}</h2>
+                <button onClick={resetForm} className="p-2 text-slate-500 hover:text-white"><X className="w-6 h-6" /></button>
               </div>
-
               <form onSubmit={handleSubmit} className="space-y-6">
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Full Name</label>
-                  <input 
-                    required 
-                    value={name}
-                    onChange={e => setName(e.target.value)}
-                    placeholder="Enter customer name" 
-                    className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 amber-glow" 
-                  />
+                  <input required value={name} onChange={e => setName(e.target.value)} placeholder="Personnel Identifier" className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 amber-glow" />
                 </div>
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Phone Number</label>
-                  <input 
-                    required 
-                    value={phone}
-                    onChange={e => setPhone(e.target.value)}
-                    placeholder="e.g. +1 234 567 890" 
-                    className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 amber-glow" 
-                  />
+                  <input required value={phone} onChange={e => setPhone(e.target.value)} placeholder="+880..." className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 amber-glow" />
                 </div>
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Address</label>
-                  <textarea 
-                    value={address}
-                    onChange={e => setAddress(e.target.value)}
-                    placeholder="Enter physical address" 
-                    className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 amber-glow h-32 resize-none" 
-                  />
+                  <textarea value={address} onChange={e => setAddress(e.target.value)} placeholder="Geographical Location" className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 amber-glow h-32 resize-none" />
                 </div>
-
-                <button 
-                  type="submit"
-                  className="w-full py-5 bg-gradient-to-r from-amber-400 to-amber-600 text-slate-950 rounded-[2rem] font-black shadow-2xl hover:scale-[1.02] transition-all uppercase tracking-widest text-xs"
-                >
-                  {editingCustomer ? 'Update Profile' : 'Register Customer'}
+                <button type="submit" disabled={isLoading} className="w-full py-5 bg-gradient-to-r from-amber-400 to-amber-600 text-slate-950 rounded-[2rem] font-black shadow-2xl hover:scale-[1.02] transition-all uppercase tracking-widest text-xs disabled:opacity-50">
+                  {isLoading ? 'Processing...' : (editingCustomer ? 'Synchronize Profile' : 'Authorize Registration')}
                 </button>
               </form>
             </motion.div>
           </div>
         )}
 
+        {/* Payment Modal */}
         {isPaymentModalOpen && selectedCustomer && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setIsPaymentModalOpen(false)}
-              className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
-            />
-            <motion.div 
-              initial={{ scale: 0.9, opacity: 0, y: 20 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.9, opacity: 0, y: 20 }}
-              className="relative w-full max-w-md bg-slate-900 border border-slate-800 rounded-[2.5rem] shadow-2xl p-8 overflow-hidden"
-            >
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setIsPaymentModalOpen(false)} className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm" />
+            <motion.div initial={{ scale: 0.9, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.9, opacity: 0, y: 20 }} className="relative w-full max-w-md bg-slate-900 border border-slate-800 rounded-[2.5rem] shadow-2xl p-8 overflow-hidden">
               <div className="flex items-center justify-between mb-8">
-                <h2 className="text-2xl font-black text-white tracking-tight uppercase">
-                  Receive Payment
-                </h2>
-                <button onClick={() => setIsPaymentModalOpen(false)} className="p-2 text-slate-500 hover:text-white transition-colors">
-                  <Trash2 className="w-6 h-6 rotate-45" />
-                </button>
+                <h2 className="text-2xl font-black text-white tracking-tight uppercase">Receive Settlement</h2>
+                <button onClick={() => setIsPaymentModalOpen(false)} className="p-2 text-slate-500 hover:text-white"><X className="w-6 h-6" /></button>
               </div>
-
               <div className="mb-6 p-4 bg-slate-800/50 rounded-2xl border border-slate-700/50">
                 <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Customer</p>
                 <p className="text-white font-black">{selectedCustomer.name}</p>
                 <div className="mt-3 pt-3 border-t border-slate-700/50 flex justify-between items-center">
-                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Total Due</p>
+                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Global Due</p>
                   <p className="text-rose-400 font-black">${selectedCustomer.totalDue.toFixed(2)}</p>
                 </div>
               </div>
-
               <form onSubmit={handleReceivePayment} className="space-y-6">
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Payment Amount ($)</label>
-                  <input 
-                    required 
-                    type="number"
-                    step="0.01"
-                    max={selectedCustomer.totalDue}
-                    value={paymentAmount}
-                    onChange={e => setPaymentAmount(parseFloat(e.target.value) || 0)}
-                    placeholder="Enter amount received" 
-                    className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-emerald-400 font-black focus:border-amber-400 amber-glow" 
-                  />
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Settlement Amount ($)</label>
+                  <input required type="number" step="0.01" max={selectedCustomer.totalDue} value={paymentAmount} onChange={e => setPaymentAmount(parseFloat(e.target.value) || 0)} placeholder="Enter amount received" className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-emerald-400 font-black focus:border-amber-400 amber-glow" />
                 </div>
-
-                <button 
-                  type="submit"
-                  className="w-full py-5 bg-gradient-to-r from-emerald-500 to-emerald-700 text-white rounded-[2rem] font-black shadow-2xl hover:scale-[1.02] transition-all uppercase tracking-widest text-xs"
-                >
-                  Confirm Payment
+                <button type="submit" disabled={isLoading} className="w-full py-5 bg-gradient-to-r from-emerald-500 to-emerald-700 text-white rounded-[2rem] font-black shadow-2xl hover:scale-[1.02] transition-all uppercase tracking-widest text-xs disabled:opacity-50">
+                  {isLoading ? 'Processing...' : 'Confirm Settlement'}
                 </button>
               </form>
             </motion.div>

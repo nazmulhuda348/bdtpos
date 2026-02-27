@@ -1,6 +1,6 @@
-
 import React, { useState, useEffect } from 'react';
 import { User, Store, UserRole, UserPermissions } from '../types';
+import { supabase } from '../lib/supabase'; // Supabase Import
 import { 
   Users as UsersIcon, 
   Plus, 
@@ -75,6 +75,7 @@ const Users: React.FC<UsersProps> = ({ users, stores, setUsers }) => {
   const [showPassword, setShowPassword] = useState(false);
   const [selectedRole, setSelectedRole] = useState<UserRole>(UserRole.SALESMAN);
   const [permissions, setPermissions] = useState<UserPermissions>(DEFAULT_PERMISSIONS);
+  const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
     if (selectedRole === UserRole.SUPER_ADMIN) {
@@ -101,39 +102,70 @@ const Users: React.FC<UsersProps> = ({ users, stores, setUsers }) => {
     setIsModalOpen(true);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setIsLoading(true);
+    
     const form = e.target as HTMLFormElement;
     const name = form.userName.value;
     const role = form.userRole.value as UserRole;
-    const assignedStoreId = form.userStore.value;
+    const assignedStoreId = form.userStore.value || null; // Empty string should be null for DB
     const password = form.userPass.value;
 
-    if (editingUser) {
-      setUsers(prev => prev.map(u => u.id === editingUser.id ? {
-        ...u,
-        name,
-        role,
-        assignedStoreId: role === UserRole.SUPER_ADMIN ? undefined : assignedStoreId,
-        password,
-        permissions: role === UserRole.SUPER_ADMIN ? FULL_PERMISSIONS : permissions
-      } : u));
-      alert('Identity Synchronized: Personnel credentials updated.');
-    } else {
-      const newUser: User = {
-        id: `u-${Date.now()}`,
-        name,
-        role,
-        avatar: `https://picsum.photos/seed/${name}/200`,
-        assignedStoreId: role === UserRole.SUPER_ADMIN ? undefined : assignedStoreId,
-        password,
-        permissions: role === UserRole.SUPER_ADMIN ? FULL_PERMISSIONS : permissions
-      };
-      setUsers(prev => [...prev, newUser]);
-      alert('Access Provisioned: New identity synchronized to global directory.');
-    }
+    const userPayload = {
+      name,
+      role,
+      assignedStoreId: role === UserRole.SUPER_ADMIN ? null : assignedStoreId,
+      password,
+      permissions: role === UserRole.SUPER_ADMIN ? FULL_PERMISSIONS : permissions,
+      avatar: editingUser ? editingUser.avatar : `https://picsum.photos/seed/${name}/200`
+    };
 
-    setIsModalOpen(false);
+    try {
+      if (editingUser) {
+        // Update existing user in Supabase
+        const { data, error } = await supabase
+          .from('users')
+          .update(userPayload)
+          .eq('id', editingUser.id)
+          .select()
+          .single();
+
+        if (error) throw error;
+
+        if (data) {
+          setUsers(prev => prev.map(u => u.id === editingUser.id ? {
+            ...data,
+            role: data.role as UserRole
+          } : u));
+          alert('Identity Synchronized: Personnel credentials updated.');
+        }
+      } else {
+        // Create new user in Supabase
+        const { data, error } = await supabase
+          .from('users')
+          .insert([userPayload])
+          .select()
+          .single();
+
+        if (error) throw error;
+
+        if (data) {
+          const newUser: User = {
+            ...data,
+            role: data.role as UserRole
+          };
+          setUsers(prev => [...prev, newUser]);
+          alert('Access Provisioned: New identity synchronized to global directory.');
+        }
+      }
+      setIsModalOpen(false);
+    } catch (error: any) {
+      alert(`Error saving user: ${error.message}`);
+      console.error(error);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const togglePermission = (key: keyof UserPermissions) => {
@@ -141,14 +173,28 @@ const Users: React.FC<UsersProps> = ({ users, stores, setUsers }) => {
     setPermissions(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
-  const removeUser = (id: string) => {
+  const removeUser = async (id: string) => {
+    // Prevent deleting the main admin
+    const userToDelete = users.find(u => u.id === id);
+    if (userToDelete?.name === 'Admin' && userToDelete?.role === UserRole.SUPER_ADMIN) {
+      alert("Critical Error: Cannot delete the primary Super Admin.");
+      return;
+    }
+
     if (window.confirm('Access Revocation: Permanently remove this user session?')) {
-      setUsers(prev => prev.filter(u => u.id !== id));
+      try {
+        const { error } = await supabase.from('users').delete().eq('id', id);
+        if (error) throw error;
+        
+        setUsers(prev => prev.filter(u => u.id !== id));
+      } catch (error: any) {
+        alert(`Error deleting user: ${error.message}`);
+      }
     }
   };
 
   const getStoreName = (id?: string) => {
-    if (!id) return 'Global/All';
+    if (!id) return 'Global / All Branches';
     return stores.find(s => s.id === id)?.name || 'Unknown Hub';
   };
 
@@ -182,11 +228,11 @@ const Users: React.FC<UsersProps> = ({ users, stores, setUsers }) => {
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredUsers.map(user => (
-            <div key={user.id} className="bg-slate-900 border border-slate-800 rounded-3xl p-6 group hover:border-amber-400/30 transition-all relative overflow-hidden">
+            <div key={user.id} className="bg-slate-900 border border-slate-800 rounded-3xl p-6 group hover:border-amber-400/30 transition-all relative overflow-hidden flex flex-col h-full">
                <div className="absolute top-0 right-0 w-24 h-24 bg-amber-400/5 rounded-full -mr-12 -mt-12 blur-2xl group-hover:bg-amber-400/10 transition-colors"></div>
                
                <div className="flex items-start justify-between relative z-10 mb-6">
-                  <img src={user.avatar} className="w-16 h-16 rounded-2xl border-2 border-slate-800 grayscale group-hover:grayscale-0 transition-all duration-500" />
+                  <img src={user.avatar} alt={user.name} className="w-16 h-16 rounded-2xl border-2 border-slate-800 grayscale group-hover:grayscale-0 transition-all duration-500 object-cover" />
                   <div className="flex flex-col items-end">
                     <span className={`px-3 py-1 rounded-xl text-[9px] font-black uppercase tracking-widest border ${
                       user.role === UserRole.SUPER_ADMIN ? 'bg-amber-400/10 text-amber-400 border-amber-400/20' : 
@@ -195,29 +241,33 @@ const Users: React.FC<UsersProps> = ({ users, stores, setUsers }) => {
                     }`}>
                       {user.role}
                     </span>
-                    <p className="text-[10px] text-slate-500 font-bold mt-2 font-mono">#{user.id.split('-')[1] || 'ADMIN'}</p>
+                    <p className="text-[10px] text-slate-500 font-bold mt-2 font-mono">#{user.id.substring(0, 8)}</p>
                   </div>
                </div>
 
-               <div className="relative z-10 space-y-4">
+               <div className="relative z-10 flex-1 flex flex-col justify-between space-y-4">
                   <div>
-                    <h3 className="text-xl font-black text-white tracking-tight group-hover:gold-gradient-text transition-all duration-500">{user.name}</h3>
+                    <h3 className="text-xl font-black text-white tracking-tight group-hover:gold-gradient-text transition-all duration-500 truncate">{user.name}</h3>
                     <div className="flex items-center gap-2 mt-1 text-slate-500">
-                      <Warehouse className="w-3.5 h-3.5" />
-                      <span className="text-[10px] font-bold uppercase tracking-widest">{getStoreName(user.assignedStoreId)}</span>
+                      <Warehouse className="w-3.5 h-3.5 shrink-0" />
+                      <span className="text-[10px] font-bold uppercase tracking-widest truncate">{getStoreName(user.assignedStoreId)}</span>
                     </div>
                   </div>
 
-                  <div className="pt-4 border-t border-slate-800 flex justify-between items-center">
+                  <div className="pt-4 border-t border-slate-800 flex justify-between items-center mt-auto">
                     <div className="flex items-center gap-2">
                       <Shield className={`w-4 h-4 ${user.role === UserRole.SUPER_ADMIN ? 'text-amber-500' : 'text-slate-600'}`} />
                       <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Clearance Lvl {user.role === UserRole.SUPER_ADMIN ? '3' : user.role === UserRole.MANAGER ? '2' : '1'}</span>
                     </div>
                     <div className="flex items-center gap-1">
                       <button onClick={() => handleOpenEditModal(user)} className="p-2.5 text-slate-600 hover:text-amber-400 hover:bg-amber-400/10 rounded-xl transition-all"><Edit2 className="w-4 h-4" /></button>
-                      {user.id !== 'u-1' && (
-                        <button onClick={() => removeUser(user.id)} className="p-2.5 text-slate-600 hover:text-rose-500 hover:bg-rose-500/10 rounded-xl transition-all"><Trash2 className="w-4 h-4" /></button>
-                      )}
+                      <button 
+                        onClick={() => removeUser(user.id)} 
+                        className="p-2.5 text-slate-600 hover:text-rose-500 hover:bg-rose-500/10 rounded-xl transition-all"
+                        title={user.name === 'Admin' ? "Cannot delete primary admin" : "Delete user"}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </div>
                   </div>
                </div>
@@ -258,8 +308,13 @@ const Users: React.FC<UsersProps> = ({ users, stores, setUsers }) => {
                       </div>
                       <div className="space-y-2">
                         <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Site Assignment</label>
-                        <select name="userStore" defaultValue={editingUser?.assignedStoreId} className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 amber-glow appearance-none">
-                          <option value="">Global/No Branch</option>
+                        <select 
+                          name="userStore" 
+                          defaultValue={editingUser?.assignedStoreId || ''} 
+                          disabled={selectedRole === UserRole.SUPER_ADMIN}
+                          className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 amber-glow appearance-none disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <option value="">Global / No Branch</option>
                           {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                         </select>
                       </div>
@@ -308,8 +363,12 @@ const Users: React.FC<UsersProps> = ({ users, stores, setUsers }) => {
                   </div>
                 </div>
 
-                <button type="submit" className="w-full bg-gradient-to-r from-amber-400 to-amber-600 text-slate-950 py-5 rounded-[2rem] font-black shadow-xl shadow-amber-900/20 hover:scale-[1.02] transition-transform uppercase tracking-widest text-xs">
-                  {editingUser ? 'Synchronize Credentials' : 'Execute Authorization'}
+                <button 
+                  type="submit" 
+                  disabled={isLoading}
+                  className="w-full bg-gradient-to-r from-amber-400 to-amber-600 text-slate-950 py-5 rounded-[2rem] font-black shadow-xl shadow-amber-900/20 hover:scale-[1.02] transition-transform uppercase tracking-widest text-xs disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+                >
+                  {isLoading ? 'Processing...' : (editingUser ? 'Synchronize Credentials' : 'Execute Authorization')}
                 </button>
              </form>
           </div>

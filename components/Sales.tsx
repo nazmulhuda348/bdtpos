@@ -78,7 +78,6 @@ const Sales: React.FC<SalesProps> = ({
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [selectedInvoiceForPrint, setSelectedInvoiceForPrint] = useState<string | null>(null);
 
-  // Initial Invoice Generation for the session
   useEffect(() => {
     if (isSessionActive && !invoiceId) {
       const year = new Date().getFullYear();
@@ -163,12 +162,10 @@ const Sales: React.FC<SalesProps> = ({
       setUnitPrice(product.price);
     } else {
       setMatchedProduct(null);
-      // For scanner inputs, we alert immediately if not found
       if (isFromScanner) {
         alert('Product not registered! Please add to inventory first.');
         setSkuId('');
       }
-      // For manual typing, we check if it looks complete or user pressed Enter in a hypothetical trigger
       if (sku.length >= 8) {
         const timer = setTimeout(() => {
           if (!products.find(p => p.sku === sku && p.storeId === currentStore.id) && sku === skuId) {
@@ -196,28 +193,32 @@ const Sales: React.FC<SalesProps> = ({
       return;
     }
 
+    const isCashSale = !customerId || customerId === '';
     const totalCost = totalAmount;
-    const currentDue = Math.max(0, totalCost - amountPaid);
+    
+    const finalAmountPaid = isCashSale ? totalCost : amountPaid;
+    const currentDue = isCashSale ? 0 : Math.max(0, totalCost - finalAmountPaid);
+    const finalCustomerName = isCashSale ? 'Cash Sale (Walk-in)' : (customerName || 'Walk-in Customer');
 
     onAddSale({
       invoiceId,
-      customerId: customerId || undefined,
-      customerName: customerName || 'Walk-in Customer',
+      customerId: isCashSale ? (null as unknown as string) : customerId,
+      customerName: finalCustomerName,
       productId: matchedProduct.id,
       productName: matchedProduct.name,
       quantity,
       buyingPrice: matchedProduct.buyingPrice,
       unitPrice,
       discount,
-      totalPrice: totalAmount,
-      amountPaid,
+      totalPrice: totalCost,
+      amountPaid: finalAmountPaid,
       amountDue: currentDue,
       storeId: currentStore.id
     });
 
     onUpdateStock(matchedProduct.id, { quantity: matchedProduct.quantity - quantity });
     
-    if (customerId && currentDue > 0) {
+    if (!isCashSale && currentDue > 0) {
       onUpdateCustomerDue(customerId, currentDue);
     }
     
@@ -226,21 +227,17 @@ const Sales: React.FC<SalesProps> = ({
     resetEntryForm();
   };
 
-  // Live Ledger Edit Handlers
   const handleLedgerQuantityChange = (sale: Sale, newQty: number) => {
     if (isNaN(newQty) || newQty < 1) return;
-    
     const product = products.find(p => p.id === sale.productId);
     if (!product) return;
 
     const diff = sale.quantity - newQty;
-    // If increasing qty (diff < 0), check inventory
     if (diff < 0 && product.quantity < Math.abs(diff)) {
       alert("Insufficient inventory for adjustment.");
       return;
     }
 
-    // Recalculate total keeping current effective unit price
     const currentEffectiveUnitPrice = sale.totalPrice / sale.quantity;
     const newTotal = newQty * currentEffectiveUnitPrice;
 
@@ -250,7 +247,6 @@ const Sales: React.FC<SalesProps> = ({
 
   const handleLedgerTotalChange = (sale: Sale, newTotal: number) => {
     if (isNaN(newTotal) || newTotal < 0) return;
-    // Update total price and derived unit price
     onUpdateSale(sale.id, { totalPrice: newTotal, unitPrice: newTotal / sale.quantity });
   };
 
@@ -262,40 +258,59 @@ const Sales: React.FC<SalesProps> = ({
     return sessionSales.reduce((acc, curr) => acc + curr.totalPrice, 0);
   }, [sessionSales]);
 
+  // 🔴 100% BULLETPROOF CALCULATION LOGIC 🔴
   const todayStats = useMemo(() => {
     const today = new Date().toISOString().split('T')[0];
     const todaySales = sales.filter(s => s.storeId === currentStore.id && s.timestamp.startsWith(today));
     const todayExpenses = expenses.filter(e => e.storeId === currentStore.id && e.timestamp.startsWith(today));
     
-    const totalSales = todaySales.reduce((acc, s) => acc + s.totalPrice, 0);
-    const totalProfit = todaySales.reduce((acc, s) => {
-      const product = products.find(p => p.id === s.productId);
-      const buyingPrice = product ? product.buyingPrice : s.buyingPrice;
-      const cost = buyingPrice * s.quantity;
-      return acc + (s.totalPrice - cost);
-    }, 0);
-    const totalExpense = todayExpenses.reduce((acc, e) => acc + e.amount, 0);
-    const netBalance = totalSales - totalExpense;
+    let totalSales = 0;
+    let todayCash = 0;
+    let totalProfit = 0;
 
-    return { totalSales, totalProfit, totalExpense, netBalance };
+    todaySales.forEach(s => {
+      // ইনভয়েস নম্বর PAY- দিয়ে শুরু হলে অথবা আইডি PAYMENT_RECEIVED হলে সেটি শুধুমাত্র ক্যাশ রিসিভ
+      const isPayment = s.invoiceId?.startsWith('PAY-') || s.productId === 'PAYMENT_RECEIVED';
+
+      // 1. Today's Cash (সবকিছুর নগদ আদায় যোগ হবে)
+      todayCash += (s.amountPaid || 0);
+
+      // 2. Sales & Profit (পেমেন্ট রিসিভ হলে এগুলো যোগ হবে না)
+      if (!isPayment) {
+        totalSales += s.totalPrice;
+        
+        const product = products.find(p => p.id === s.productId);
+        const buyingPrice = product ? product.buyingPrice : s.buyingPrice;
+        const cost = buyingPrice * s.quantity;
+        totalProfit += (s.totalPrice - cost);
+      }
+    });
+    
+    const totalExpense = todayExpenses.reduce((acc, e) => acc + e.amount, 0);
+    const netBalance = todayCash - totalExpense;
+
+    return { totalSales, todayCash, totalProfit, totalExpense, netBalance };
   }, [sales, products, expenses, currentStore.id]);
 
   const exportToCSV = () => {
     const headers = ['Invoice', 'Customer', 'Product', 'Qty', 'Unit Price', 'Discount', 'Total', 'Paid', 'Due', 'Date'];
     const data = sales
       .filter(s => s.storeId === currentStore.id)
-      .map(s => [
-        s.invoiceId,
-        s.customerName,
-        s.productName,
-        s.quantity,
-        s.unitPrice.toFixed(2),
-        s.discount + '%',
-        s.totalPrice.toFixed(2),
-        (s.amountPaid || 0).toFixed(2),
-        (s.amountDue || 0).toFixed(2),
-        new Date(s.timestamp).toLocaleDateString()
-      ]);
+      .map(s => {
+        const isPayment = s.invoiceId?.startsWith('PAY-') || s.productId === 'PAYMENT_RECEIVED';
+        return [
+          s.invoiceId,
+          s.customerName,
+          isPayment ? 'DUE COLLECTION' : s.productName,
+          isPayment ? '-' : s.quantity,
+          isPayment ? '-' : s.unitPrice.toFixed(2),
+          isPayment ? '-' : s.discount + '%',
+          isPayment ? '-' : s.totalPrice.toFixed(2),
+          (s.amountPaid || 0).toFixed(2),
+          (s.amountDue || 0).toFixed(2),
+          new Date(s.timestamp).toLocaleDateString()
+        ];
+      });
     
     const csvContent = [headers, ...data].map(e => e.join(",")).join("\n");
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -350,45 +365,54 @@ const Sales: React.FC<SalesProps> = ({
           </div>
         </div>
 
-        {/* Today's Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 shadow-2xl flex items-center gap-4 group hover:border-amber-500/30 transition-all">
-            <div className="w-12 h-12 bg-amber-400/10 rounded-2xl flex items-center justify-center text-amber-400 group-hover:scale-110 transition-transform">
-              <DollarSign className="w-6 h-6" />
+        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
+          <div className="bg-slate-900/50 backdrop-blur-md p-5 rounded-[2rem] border border-slate-800 shadow-xl flex items-center gap-4 group hover:border-slate-500/30 transition-all">
+            <div className="w-10 h-10 bg-slate-800 rounded-xl flex items-center justify-center text-slate-400 group-hover:scale-110 transition-transform">
+              <ShoppingCart className="w-5 h-5" />
             </div>
             <div>
-              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Today's Sales</p>
-              <h3 className="text-xl font-black text-white tracking-tighter">${todayStats.totalSales.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+              <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Today's Sales</p>
+              <h3 className="text-lg font-black text-white tracking-tighter">${todayStats.totalSales.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
             </div>
           </div>
 
-          <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 shadow-2xl flex items-center gap-4 group hover:border-emerald-500/30 transition-all">
-            <div className="w-12 h-12 bg-emerald-400/10 rounded-2xl flex items-center justify-center text-emerald-400 group-hover:scale-110 transition-transform">
-              <TrendingUp className="w-6 h-6" />
+          <div className="bg-slate-900/50 backdrop-blur-md p-5 rounded-[2rem] border border-slate-800 shadow-xl flex items-center gap-4 group hover:border-amber-500/30 transition-all">
+            <div className="w-10 h-10 bg-amber-400/10 rounded-xl flex items-center justify-center text-amber-400 group-hover:scale-110 transition-transform">
+              <DollarSign className="w-5 h-5" />
             </div>
             <div>
-              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Today's Profit</p>
-              <h3 className="text-xl font-black text-emerald-400 tracking-tighter">${todayStats.totalProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+              <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Today's Cash</p>
+              <h3 className="text-lg font-black text-amber-400 tracking-tighter">${todayStats.todayCash.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
             </div>
           </div>
 
-          <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 shadow-2xl flex items-center gap-4 group hover:border-rose-500/30 transition-all">
-            <div className="w-12 h-12 bg-rose-400/10 rounded-2xl flex items-center justify-center text-rose-400 group-hover:scale-110 transition-transform">
-              <Zap className="w-6 h-6" />
+          <div className="bg-slate-900/50 backdrop-blur-md p-5 rounded-[2rem] border border-slate-800 shadow-xl flex items-center gap-4 group hover:border-emerald-500/30 transition-all">
+            <div className="w-10 h-10 bg-emerald-400/10 rounded-xl flex items-center justify-center text-emerald-400 group-hover:scale-110 transition-transform">
+              <TrendingUp className="w-5 h-5" />
             </div>
             <div>
-              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Today's Expense</p>
-              <h3 className="text-xl font-black text-rose-400 tracking-tighter">${todayStats.totalExpense.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+              <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Today's Profit</p>
+              <h3 className="text-lg font-black text-emerald-400 tracking-tighter">${todayStats.totalProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
             </div>
           </div>
 
-          <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 shadow-2xl flex items-center gap-4 group hover:border-blue-500/30 transition-all">
-            <div className="w-12 h-12 bg-blue-400/10 rounded-2xl flex items-center justify-center text-blue-400 group-hover:scale-110 transition-transform">
-              <LayoutDashboard className="w-6 h-6" />
+          <div className="bg-slate-900/50 backdrop-blur-md p-5 rounded-[2rem] border border-slate-800 shadow-xl flex items-center gap-4 group hover:border-rose-500/30 transition-all">
+            <div className="w-10 h-10 bg-rose-400/10 rounded-xl flex items-center justify-center text-rose-400 group-hover:scale-110 transition-transform">
+              <Zap className="w-5 h-5" />
             </div>
             <div>
-              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Net Balance</p>
-              <h3 className={`text-xl font-black tracking-tighter ${todayStats.netBalance >= 0 ? 'text-blue-400' : 'text-rose-400'}`}>
+              <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Today's Expense</p>
+              <h3 className="text-lg font-black text-rose-400 tracking-tighter">${todayStats.totalExpense.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+            </div>
+          </div>
+
+          <div className="bg-slate-900/50 backdrop-blur-md p-5 rounded-[2rem] border border-slate-800 shadow-xl flex items-center gap-4 group hover:border-blue-500/30 transition-all">
+            <div className="w-10 h-10 bg-blue-400/10 rounded-xl flex items-center justify-center text-blue-400 group-hover:scale-110 transition-transform">
+              <LayoutDashboard className="w-5 h-5" />
+            </div>
+            <div>
+              <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Net Balance</p>
+              <h3 className={`text-lg font-black tracking-tighter ${todayStats.netBalance >= 0 ? 'text-blue-400' : 'text-rose-400'}`}>
                 ${todayStats.netBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </h3>
             </div>
@@ -424,29 +448,48 @@ const Sales: React.FC<SalesProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/50">
-                {historicalSales.map((sale) => (
-                  <tr key={sale.id} className="group hover:bg-slate-800/40 transition-all">
-                    <td className="px-6 py-5 font-bold text-slate-400 text-xs whitespace-nowrap">
-                      {new Date(sale.timestamp).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
-                    </td>
-                    <td className="px-6 py-5 font-black text-white text-xs tracking-tighter">{sale.invoiceId}</td>
-                    <td className="px-6 py-5 text-sm font-bold text-slate-300">{sale.customerName}</td>
-                    <td className="px-6 py-5 text-sm text-slate-400">{sale.productName}</td>
-                    <td className="px-6 py-5 text-center font-black text-white text-sm">{sale.quantity}</td>
-                    <td className="px-6 py-5 text-right font-black text-emerald-400 text-sm">
-                      <p>${sale.totalPrice.toFixed(2)}</p>
-                      {sale.amountDue > 0 && <p className="text-rose-400 text-[9px] uppercase tracking-tighter">Due: ${sale.amountDue.toFixed(2)}</p>}
-                    </td>
-                    <td className="px-6 py-5 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <button onClick={() => handlePrint(sale.invoiceId)} className="p-2 text-slate-600 hover:text-amber-400"><Printer className="w-4 h-4" /></button>
-                        {canDelete && (
-                          <button onClick={() => onDeleteSale(sale.id)} className="p-2 text-slate-600 hover:text-rose-500"><Trash2 className="w-4 h-4" /></button>
+                {historicalSales.map((sale) => {
+                  const isPayment = sale.invoiceId?.startsWith('PAY-') || sale.productId === 'PAYMENT_RECEIVED';
+                  return (
+                    <tr key={sale.id} className="group hover:bg-slate-800/40 transition-all">
+                      <td className="px-6 py-5 font-bold text-slate-400 text-xs whitespace-nowrap">
+                        {new Date(sale.timestamp).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                      </td>
+                      <td className="px-6 py-5 font-black text-white text-xs tracking-tighter">{sale.invoiceId}</td>
+                      <td className="px-6 py-5 text-sm font-bold text-slate-300">{sale.customerName}</td>
+                      <td className="px-6 py-5 text-sm text-slate-400">
+                        {isPayment ? (
+                          <span className="text-blue-400 italic font-bold">Due Collection</span>
+                        ) : (
+                          sale.productName
                         )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                      <td className="px-6 py-5 text-center font-black text-white text-sm">
+                        {isPayment ? '-' : sale.quantity}
+                      </td>
+                      <td className="px-6 py-5 text-right font-black text-sm">
+                        {isPayment ? (
+                          <span className="text-blue-400 bg-blue-500/10 px-3 py-1.5 rounded-xl text-[10px] uppercase tracking-widest">+ ${sale.amountPaid?.toFixed(2)}</span>
+                        ) : (
+                          <div className="text-emerald-400">
+                            <p>${sale.totalPrice.toFixed(2)}</p>
+                            {sale.amountDue > 0 && <p className="text-rose-400 text-[9px] uppercase tracking-tighter mt-1">Due: ${sale.amountDue.toFixed(2)}</p>}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-6 py-5 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          {!isPayment && (
+                            <button onClick={() => handlePrint(sale.invoiceId)} className="p-2 text-slate-600 hover:text-amber-400"><Printer className="w-4 h-4" /></button>
+                          )}
+                          {canDelete && (
+                            <button onClick={() => onDeleteSale(sale.id)} className="p-2 text-slate-600 hover:text-rose-500"><Trash2 className="w-4 h-4" /></button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -455,10 +498,9 @@ const Sales: React.FC<SalesProps> = ({
     );
   }
 
-  // Session View: Split Screen (Form Left, Live Ledger Right)
+  // Session View
   return (
     <div className="h-[calc(100vh-140px)] flex flex-col lg:flex-row gap-8 animate-in fade-in zoom-in-95 duration-500 overflow-hidden">
-      {/* LEFT: Record New Sale Page */}
       <div className="lg:w-[450px] flex flex-col bg-slate-900 border border-slate-800 rounded-[2.5rem] shadow-2xl p-8 overflow-y-auto custom-scrollbar relative">
         <div className="mb-6 flex items-center justify-between">
           <div>
@@ -479,7 +521,6 @@ const Sales: React.FC<SalesProps> = ({
         )}
 
         <form onSubmit={handleSubmit} className="space-y-6 flex-1">
-          {/* SKU IDENTIFIER SEARCH */}
           <div className="space-y-2">
             <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2 text-amber-500">sku identifier</label>
             <div className="relative group">
@@ -498,7 +539,6 @@ const Sales: React.FC<SalesProps> = ({
             </div>
           </div>
 
-          {/* SCANNER VIEWPORT */}
           {isScanning && (
             <div className="mb-6 animate-in fade-in duration-300">
               <div className="relative aspect-video bg-slate-800 rounded-3xl overflow-hidden border-2 border-amber-400/50">
@@ -516,7 +556,6 @@ const Sales: React.FC<SalesProps> = ({
             </div>
           )}
 
-          {/* AUTO-FILL READ-ONLY FIELDS */}
           {matchedProduct && (
             <div className="grid grid-cols-1 gap-4 animate-in slide-in-from-top-2">
               <div className="space-y-2">
@@ -534,7 +573,6 @@ const Sales: React.FC<SalesProps> = ({
             </div>
           )}
 
-          {/* CUSTOMER INFO */}
           <div className="space-y-2">
             <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Customer Profile</label>
             <div className="relative group">
@@ -556,7 +594,6 @@ const Sales: React.FC<SalesProps> = ({
             </div>
           </div>
 
-          {/* MANUAL INPUTS: VOLUME & SELLING PRICE */}
           <div className={`grid grid-cols-2 gap-4 transition-all duration-500 ${!matchedProduct ? 'opacity-30 pointer-events-none blur-[1px]' : ''}`}>
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">volume (qty)</label>
@@ -589,7 +626,6 @@ const Sales: React.FC<SalesProps> = ({
             </div>
           </div>
 
-          {/* MANUAL INPUT: DISCOUNT ADJUSTMENT */}
           <div className={`grid grid-cols-2 gap-4 transition-all duration-500 ${!matchedProduct ? 'opacity-30 pointer-events-none blur-[1px]' : ''}`}>
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">discount (%)</label>
@@ -609,9 +645,14 @@ const Sales: React.FC<SalesProps> = ({
                 <input 
                   type="number" 
                   step="0.01" 
-                  value={amountPaid}
+                  disabled={!customerId}
+                  value={!customerId ? totalAmount : amountPaid}
                   onChange={e => setAmountPaid(parseFloat(e.target.value) || 0)}
-                  className="w-full pl-12 pr-4 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-amber-400 font-black focus:border-amber-400 amber-glow" 
+                  className={`w-full pl-12 pr-4 py-4 rounded-2xl outline-none font-black transition-all ${
+                    !customerId 
+                      ? 'bg-emerald-900/20 border border-emerald-500/30 text-emerald-500 cursor-not-allowed' 
+                      : 'bg-slate-800 border border-slate-700 text-amber-400 focus:border-amber-400 amber-glow'
+                  }`} 
                 />
               </div>
             </div>
@@ -625,7 +666,6 @@ const Sales: React.FC<SalesProps> = ({
           </div>
 
           <div className="pt-4 flex flex-col gap-3">
-            {/* EXECUTION: CONFIRM SETTLEMENT */}
             <button 
               type="submit" 
               disabled={!matchedProduct}
@@ -633,7 +673,6 @@ const Sales: React.FC<SalesProps> = ({
             >
               confirm settlement <ArrowRight className="w-5 h-5" />
             </button>
-            {/* COMPLETION: COMPLETE BUTTON */}
             <button 
               type="button" 
               onClick={() => { setIsSessionActive(false); setInvoiceId(''); setCustomerName(''); resetEntryForm(); }}
@@ -645,7 +684,6 @@ const Sales: React.FC<SalesProps> = ({
         </form>
       </div>
 
-      {/* RIGHT: LIVE SALES LEDGER */}
       <div className="flex-1 flex flex-col bg-slate-900/50 backdrop-blur-md border border-slate-800 rounded-[2.5rem] shadow-2xl overflow-hidden">
         <div className="p-8 border-b border-slate-800 flex items-center justify-between">
            <div>
@@ -674,7 +712,6 @@ const Sales: React.FC<SalesProps> = ({
                         <p className="text-[10px] text-slate-500 font-bold uppercase tracking-tighter italic">{sale.customerName}</p>
                       </td>
                       <td className="px-6 py-5 text-center">
-                        {/* INLINE VOLUME EDIT */}
                         <input 
                           type="number"
                           min="1"
@@ -686,7 +723,6 @@ const Sales: React.FC<SalesProps> = ({
                       <td className="px-6 py-5 text-right">
                         <div className="flex items-center justify-end gap-1">
                           <span className="text-emerald-400 text-xs font-bold">$</span>
-                          {/* INLINE SETTLEMENT EDIT */}
                           <input 
                             type="number"
                             step="0.01"
@@ -710,7 +746,6 @@ const Sales: React.FC<SalesProps> = ({
            </table>
         </div>
         
-        {/* Session Bottom Summary */}
         <div className="p-8 bg-slate-950 border-t border-slate-800">
            <div className="flex items-center justify-between">
               <div>
@@ -811,8 +846,8 @@ const Sales: React.FC<SalesProps> = ({
                   <tbody className="divide-y divide-slate-100">
                     {sales.filter(s => s.invoiceId === selectedInvoiceForPrint).map(item => (
                       <tr key={item.id}>
-                        <td className="py-4 font-bold">{item.productName}</td>
-                        <td className="py-4 text-center font-bold">{item.quantity}</td>
+                        <td className="py-4 font-bold">{item.productId === 'PAYMENT_RECEIVED' ? 'Due Collection' : item.productName}</td>
+                        <td className="py-4 text-center font-bold">{item.productId === 'PAYMENT_RECEIVED' ? '-' : item.quantity}</td>
                         <td className="py-4 text-right font-bold">${item.unitPrice.toFixed(2)}</td>
                         <td className="py-4 text-right font-black">${item.totalPrice.toFixed(2)}</td>
                       </tr>

@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo } from 'react';
 import { Supplier, Store, Expense } from '../types';
 import { 
@@ -11,18 +10,19 @@ import {
   Trash2, 
   Edit2,
   Download,
-  Briefcase
+  Briefcase,
+  X // lucide-react থেকে X ইমপোর্ট করা হয়েছে
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface SuppliersProps {
   suppliers: Supplier[];
   currentStore: Store;
-  onAddSupplier: (supplier: Omit<Supplier, 'id'>) => void;
-  onUpdateSupplier: (id: string, updates: Partial<Supplier>) => void;
-  onDeleteSupplier: (id: string) => void;
-  onAddExpense: (expense: Omit<Expense, 'id' | 'timestamp'>) => void;
-  onUpdateSupplierDue: (id: string, amount: number) => void;
+  onAddSupplier: (supplier: Omit<Supplier, 'id'>) => void | Promise<void>;
+  onUpdateSupplier: (id: string, updates: Partial<Supplier>) => void | Promise<void>;
+  onDeleteSupplier: (id: string) => void | Promise<void>;
+  onAddExpense: (expense: Omit<Expense, 'id' | 'timestamp'>) => void | Promise<void>;
+  onUpdateSupplierDue: (id: string, amount: number) => void | Promise<void>;
   canEdit: boolean;
   canDelete: boolean;
 }
@@ -43,6 +43,7 @@ const Suppliers: React.FC<SuppliersProps> = ({
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
   const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
+  const [isLoading, setIsLoading] = useState(false); // লোডিং স্টেট
 
   // Form State
   const [name, setName] = useState('');
@@ -63,40 +64,59 @@ const Suppliers: React.FC<SuppliersProps> = ({
     return filteredSuppliers.reduce((acc, curr) => acc + curr.totalDue, 0);
   }, [filteredSuppliers]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (editingSupplier) {
-      onUpdateSupplier(editingSupplier.id, { name, phone, address });
-    } else {
-      onAddSupplier({
-        name,
-        phone,
-        address,
-        totalDue: 0,
-        storeId: currentStore.id
-      });
+    setIsLoading(true);
+
+    try {
+      if (editingSupplier) {
+        await onUpdateSupplier(editingSupplier.id, { name, phone, address });
+        alert('Registry Updated: Vendor profile synchronized.');
+      } else {
+        await onAddSupplier({
+          name,
+          phone,
+          address,
+          totalDue: 0,
+          storeId: currentStore.id
+        });
+        alert('Network Expanded: New supplier registered successfully.');
+      }
+      resetForm();
+    } catch (error: any) {
+      alert(`Operation failed: ${error.message}`);
+    } finally {
+      setIsLoading(false);
     }
-    resetForm();
   };
 
-  const handlePaySupplier = (e: React.FormEvent) => {
+  const handlePaySupplier = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedSupplier || paymentAmount <= 0) return;
 
-    // Log the payment as an expense entry
-    onAddExpense({
-      storeId: currentStore.id,
-      category: 'Supplier Payment',
-      amount: paymentAmount,
-      description: `Payment to supplier: ${selectedSupplier.name}`
-    });
+    setIsLoading(true);
 
-    // Update supplier due
-    onUpdateSupplierDue(selectedSupplier.id, -paymentAmount);
+    try {
+      // ১. ডাটাবেসে খরচের এন্ট্রি হিসেবে সেভ করা হচ্ছে
+      await onAddExpense({
+        storeId: currentStore.id,
+        category: 'Supplier Payment',
+        amount: paymentAmount,
+        description: `Settlement payment to: ${selectedSupplier.name}`
+      });
 
-    setIsPaymentModalOpen(false);
-    setSelectedSupplier(null);
-    setPaymentAmount(0);
+      // ২. সাপ্লায়ারের বকেয়া আপডেট করা হচ্ছে
+      await onUpdateSupplierDue(selectedSupplier.id, -paymentAmount);
+
+      alert(`Financial Settlement: $${paymentAmount} paid to ${selectedSupplier.name}`);
+      setIsPaymentModalOpen(false);
+      setSelectedSupplier(null);
+      setPaymentAmount(0);
+    } catch (error: any) {
+      alert(`Payment recording failed: ${error.message}`);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const resetForm = () => {
@@ -161,7 +181,7 @@ const Suppliers: React.FC<SuppliersProps> = ({
           </button>
           {canEdit && (
             <button 
-              onClick={() => setIsModalOpen(true)}
+              onClick={() => { setEditingSupplier(null); setIsModalOpen(true); }}
               className="bg-gradient-to-r from-amber-400 to-amber-600 text-slate-950 px-6 py-4 rounded-2xl font-black flex items-center gap-3 hover:scale-[1.02] transition-all shadow-xl shadow-amber-900/10 uppercase tracking-widest text-xs"
             >
               <Briefcase className="w-5 h-5 stroke-[3px]" />
@@ -172,8 +192,8 @@ const Suppliers: React.FC<SuppliersProps> = ({
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 flex items-center gap-6">
-          <div className="w-14 h-14 bg-amber-400/10 rounded-2xl flex items-center justify-center text-amber-400">
+        <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 flex items-center gap-6 group hover:border-amber-400/30 transition-all">
+          <div className="w-14 h-14 bg-amber-400/10 rounded-2xl flex items-center justify-center text-amber-400 group-hover:scale-110 transition-transform">
             <Truck className="w-7 h-7" />
           </div>
           <div>
@@ -181,13 +201,13 @@ const Suppliers: React.FC<SuppliersProps> = ({
             <h3 className="text-2xl font-black text-white">{filteredSuppliers.length}</h3>
           </div>
         </div>
-        <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 flex items-center gap-6">
-          <div className="w-14 h-14 bg-rose-400/10 rounded-2xl flex items-center justify-center text-rose-400">
+        <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 flex items-center gap-6 group hover:border-rose-400/30 transition-all">
+          <div className="w-14 h-14 bg-rose-400/10 rounded-2xl flex items-center justify-center text-rose-400 group-hover:scale-110 transition-transform">
             <DollarSign className="w-7 h-7" />
           </div>
           <div>
             <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Total Payable</p>
-            <h3 className="text-2xl font-black text-rose-400">${totalDues.toFixed(2)}</h3>
+            <h3 className="text-2xl font-black text-rose-400">${totalDues.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3>
           </div>
         </div>
       </div>
@@ -220,7 +240,7 @@ const Suppliers: React.FC<SuppliersProps> = ({
                 <tr key={supplier.id} className="group hover:bg-slate-800/40 transition-all">
                   <td className="px-6 py-5">
                     <p className="font-black text-white text-sm">{supplier.name}</p>
-                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-tighter">ID: {supplier.id}</p>
+                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-tighter">Ref: {supplier.id.substring(0, 8)}</p>
                   </td>
                   <td className="px-6 py-5">
                     <div className="flex items-center gap-2 text-slate-300 text-sm">
@@ -259,7 +279,7 @@ const Suppliers: React.FC<SuppliersProps> = ({
                       )}
                       {canDelete && (
                         <button 
-                          onClick={() => onDeleteSupplier(supplier.id)}
+                          onClick={() => { if(window.confirm('Delete vendor? History will remain.')) onDeleteSupplier(supplier.id); }}
                           className="p-2 text-slate-600 hover:text-rose-500 transition-colors"
                         >
                           <Trash2 className="w-4 h-4" />
@@ -269,139 +289,66 @@ const Suppliers: React.FC<SuppliersProps> = ({
                   </td>
                 </tr>
               ))}
-              {filteredSuppliers.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="px-6 py-20 text-center opacity-30 grayscale">
-                    <Truck className="w-12 h-12 mx-auto text-slate-600 mb-4" />
-                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">No suppliers found</p>
-                  </td>
-                </tr>
-              )}
             </tbody>
           </table>
         </div>
       </div>
 
       <AnimatePresence>
+        {/* Supplier Add/Edit Modal */}
         {isModalOpen && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={resetForm}
-              className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
-            />
-            <motion.div 
-              initial={{ scale: 0.9, opacity: 0, y: 20 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.9, opacity: 0, y: 20 }}
-              className="relative w-full max-w-lg bg-slate-900 border border-slate-800 rounded-[2.5rem] shadow-2xl p-8 overflow-hidden"
-            >
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={resetForm} className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm" />
+            <motion.div initial={{ scale: 0.9, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.9, opacity: 0, y: 20 }} className="relative w-full max-w-lg bg-slate-900 border border-slate-800 rounded-[2.5rem] shadow-2xl p-8 overflow-hidden">
               <div className="flex items-center justify-between mb-8">
-                <h2 className="text-2xl font-black text-white tracking-tight uppercase">
-                  {editingSupplier ? 'Edit Supplier' : 'Add New Supplier'}
-                </h2>
-                <button onClick={resetForm} className="p-2 text-slate-500 hover:text-white transition-colors">
-                  <Trash2 className="w-6 h-6 rotate-45" />
-                </button>
+                <h2 className="text-2xl font-black text-white tracking-tight uppercase">{editingSupplier ? 'Edit Vendor' : 'Add Supplier'}</h2>
+                <button onClick={resetForm} className="p-2 text-slate-500 hover:text-white transition-colors"><X className="w-6 h-6" /></button>
               </div>
-
               <form onSubmit={handleSubmit} className="space-y-6">
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Vendor Name</label>
-                  <input 
-                    required 
-                    value={name}
-                    onChange={e => setName(e.target.value)}
-                    placeholder="Enter supplier name" 
-                    className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 amber-glow" 
-                  />
+                  <input required value={name} onChange={e => setName(e.target.value)} placeholder="Full Legal Identity" className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 amber-glow" />
                 </div>
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Contact Number</label>
-                  <input 
-                    required 
-                    value={phone}
-                    onChange={e => setPhone(e.target.value)}
-                    placeholder="e.g. +1 234 567 890" 
-                    className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 amber-glow" 
-                  />
+                  <input required value={phone} onChange={e => setPhone(e.target.value)} placeholder="+880..." className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 amber-glow" />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Address</label>
-                  <textarea 
-                    value={address}
-                    onChange={e => setAddress(e.target.value)}
-                    placeholder="Enter physical address" 
-                    className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 amber-glow h-32 resize-none" 
-                  />
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Geographical Address</label>
+                  <textarea value={address} onChange={e => setAddress(e.target.value)} placeholder="Physical Coordinate Details" className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 amber-glow h-32 resize-none" />
                 </div>
-
-                <button 
-                  type="submit"
-                  className="w-full py-5 bg-gradient-to-r from-amber-400 to-amber-600 text-slate-950 rounded-[2rem] font-black shadow-2xl hover:scale-[1.02] transition-all uppercase tracking-widest text-xs"
-                >
-                  {editingSupplier ? 'Update Vendor' : 'Register Supplier'}
+                <button type="submit" disabled={isLoading} className="w-full py-5 bg-gradient-to-r from-amber-400 to-amber-600 text-slate-950 rounded-[2rem] font-black shadow-2xl hover:scale-[1.02] transition-all uppercase tracking-widest text-xs disabled:opacity-50">
+                  {isLoading ? 'Synchronizing...' : (editingSupplier ? 'Authorize Modification' : 'Execute Registration')}
                 </button>
               </form>
             </motion.div>
           </div>
         )}
 
+        {/* Payment Modal */}
         {isPaymentModalOpen && selectedSupplier && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setIsPaymentModalOpen(false)}
-              className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
-            />
-            <motion.div 
-              initial={{ scale: 0.9, opacity: 0, y: 20 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.9, opacity: 0, y: 20 }}
-              className="relative w-full max-w-md bg-slate-900 border border-slate-800 rounded-[2.5rem] shadow-2xl p-8 overflow-hidden"
-            >
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setIsPaymentModalOpen(false)} className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm" />
+            <motion.div initial={{ scale: 0.9, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.9, opacity: 0, y: 20 }} className="relative w-full max-w-md bg-slate-900 border border-slate-800 rounded-[2.5rem] shadow-2xl p-8 overflow-hidden">
               <div className="flex items-center justify-between mb-8">
-                <h2 className="text-2xl font-black text-white tracking-tight uppercase">
-                  Pay Supplier
-                </h2>
-                <button onClick={() => setIsPaymentModalOpen(false)} className="p-2 text-slate-500 hover:text-white transition-colors">
-                  <Trash2 className="w-6 h-6 rotate-45" />
-                </button>
+                <h2 className="text-2xl font-black text-white tracking-tight uppercase">Authorize Settlement</h2>
+                <button onClick={() => setIsPaymentModalOpen(false)} className="p-2 text-slate-500 hover:text-white transition-colors"><X className="w-6 h-6" /></button>
               </div>
-
               <div className="mb-6 p-4 bg-slate-800/50 rounded-2xl border border-slate-700/50">
-                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Supplier</p>
+                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Vendor</p>
                 <p className="text-white font-black">{selectedSupplier.name}</p>
                 <div className="mt-3 pt-3 border-t border-slate-700/50 flex justify-between items-center">
-                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Total Payable</p>
+                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Global Payable</p>
                   <p className="text-rose-400 font-black">${selectedSupplier.totalDue.toFixed(2)}</p>
                 </div>
               </div>
-
               <form onSubmit={handlePaySupplier} className="space-y-6">
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Payment Amount ($)</label>
-                  <input 
-                    required 
-                    type="number"
-                    step="0.01"
-                    max={selectedSupplier.totalDue}
-                    value={paymentAmount}
-                    onChange={e => setPaymentAmount(parseFloat(e.target.value) || 0)}
-                    placeholder="Enter amount to pay" 
-                    className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-rose-400 font-black focus:border-amber-400 amber-glow" 
-                  />
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Settlement Amount ($)</label>
+                  <input required type="number" step="0.01" max={selectedSupplier.totalDue} value={paymentAmount} onChange={e => setPaymentAmount(parseFloat(e.target.value) || 0)} placeholder="Enter amount to pay" className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-rose-400 font-black focus:border-amber-400 amber-glow" />
                 </div>
-
-                <button 
-                  type="submit"
-                  className="w-full py-5 bg-gradient-to-r from-rose-500 to-rose-700 text-white rounded-[2rem] font-black shadow-2xl hover:scale-[1.02] transition-all uppercase tracking-widest text-xs"
-                >
-                  Confirm Payment
+                <button type="submit" disabled={isLoading} className="w-full py-5 bg-gradient-to-r from-rose-500 to-rose-700 text-white rounded-[2rem] font-black shadow-2xl hover:scale-[1.02] transition-all uppercase tracking-widest text-xs disabled:opacity-50">
+                  {isLoading ? 'Settling...' : 'Confirm Settlement'}
                 </button>
               </form>
             </motion.div>

@@ -1,6 +1,6 @@
-
 import React, { useState } from 'react';
 import { Store, User, UserRole } from '../types';
+import { supabase } from '../lib/supabase'; // Supabase Import
 import { 
   Warehouse, 
   Plus, 
@@ -46,16 +46,36 @@ const Settings: React.FC<SettingsProps> = ({
   const [isChangingName, setIsChangingName] = useState(false);
   const [isAddingStore, setIsAddingStore] = useState(false);
   const [currency, setCurrency] = useState('USD ($)');
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleAddStore = (e: React.FormEvent) => {
+  const handleAddStore = async (e: React.FormEvent) => {
     e.preventDefault();
+    setIsLoading(true);
     const form = e.target as HTMLFormElement;
     const name = form.storeName.value;
     const location = form.storeLoc.value;
     
     if (name && location) {
-      setStores(prev => [...prev, { id: `wh-${Math.random().toString(36).substr(2, 9)}`, name, location }]);
-      setIsAddingStore(false);
+      try {
+        // Insert new store into Supabase database
+        const { data, error } = await supabase
+          .from('stores')
+          .insert([{ name, location }])
+          .select()
+          .single();
+
+        if (error) throw error;
+
+        if (data) {
+          setStores(prev => [...prev, data]);
+          setIsAddingStore(false);
+          alert('System Operations: New Branch registered successfully.');
+        }
+      } catch (error: any) {
+        alert(`Error adding store: ${error.message}`);
+      } finally {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -72,30 +92,57 @@ const Settings: React.FC<SettingsProps> = ({
     }
   };
 
-  const handleUpdateName = (e: React.FormEvent) => {
+  const handleUpdateName = async (e: React.FormEvent) => {
     e.preventDefault();
     const form = e.target as HTMLFormElement;
     const newName = form.newName.value;
     
     if (newName) {
-      const updatedUser = { ...currentUser, name: newName };
-      setCurrentUser(updatedUser);
-      setUsers(prev => prev.map(u => u.id === currentUser.id ? updatedUser : u));
-      setIsChangingName(false);
-      alert('Registry Updated: Display identifier modified.');
+      try {
+        const { error } = await supabase
+          .from('users')
+          .update({ name: newName })
+          .eq('id', currentUser.id);
+
+        if (error) throw error;
+
+        const updatedUser = { ...currentUser, name: newName };
+        setCurrentUser(updatedUser);
+        setUsers(prev => prev.map(u => u.id === currentUser.id ? updatedUser : u));
+        setIsChangingName(false);
+        // Also update local storage so name persists on reload without full logout
+        localStorage.setItem('omni_user', JSON.stringify(updatedUser));
+        alert('Registry Updated: Display identifier modified.');
+      } catch (error: any) {
+        alert(`Error updating profile: ${error.message}`);
+      }
     }
   };
 
-  const handleUpdatePassword = (e: React.FormEvent) => {
+  const handleUpdatePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     const form = e.target as HTMLFormElement;
     const newPass = form.newPass.value;
     
-    const updatedUser = { ...currentUser, password: newPass };
-    setCurrentUser(updatedUser);
-    setUsers(prev => prev.map(u => u.id === currentUser.id ? updatedUser : u));
-    setIsChangingPass(false);
-    alert('Security Alert: Access key modified.');
+    if (newPass) {
+      try {
+        const { error } = await supabase
+          .from('users')
+          .update({ password: newPass })
+          .eq('id', currentUser.id);
+
+        if (error) throw error;
+
+        const updatedUser = { ...currentUser, password: newPass };
+        setCurrentUser(updatedUser);
+        setUsers(prev => prev.map(u => u.id === currentUser.id ? updatedUser : u));
+        setIsChangingPass(false);
+        localStorage.setItem('omni_user', JSON.stringify(updatedUser));
+        alert('Security Alert: Access key modified.');
+      } catch (error: any) {
+        alert(`Error updating password: ${error.message}`);
+      }
+    }
   };
 
   return (
@@ -142,7 +189,9 @@ const Settings: React.FC<SettingsProps> = ({
                     <input name="storeName" required placeholder="Branch Identifier..." className="flex-1 px-5 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-sm font-bold shadow-inner focus:border-amber-400 amber-glow" />
                     <input name="storeLoc" required placeholder="Physical Coordinates..." className="flex-1 px-5 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-sm font-bold shadow-inner focus:border-amber-400 amber-glow" />
                     <div className="flex gap-2">
-                      <button type="submit" className="bg-amber-400 text-slate-950 px-8 py-4 rounded-2xl text-xs font-black shadow-lg hover:bg-amber-500">Commit</button>
+                      <button type="submit" disabled={isLoading} className="bg-amber-400 text-slate-950 px-8 py-4 rounded-2xl text-xs font-black shadow-lg hover:bg-amber-500 disabled:opacity-50">
+                        {isLoading ? '...' : 'Commit'}
+                      </button>
                       <button type="button" onClick={() => setIsAddingStore(false)} className="bg-slate-800 border border-slate-700 text-slate-400 px-6 py-4 rounded-2xl text-xs font-black hover:text-white"><X className="w-5 h-5" /></button>
                     </div>
                  </form>
@@ -219,7 +268,7 @@ const Settings: React.FC<SettingsProps> = ({
         </div>
 
         {/* Right Column: Profile Identity Governance */}
-        <div className="lg:col-span-5">
+        <div className="lg:col-span-5 space-y-10">
           <section className="bg-slate-900/50 backdrop-blur-md rounded-[2.5rem] border border-slate-800 p-10 shadow-2xl sticky top-24">
             <div className="flex items-center gap-4 mb-10">
               <div className="bg-slate-800 p-3 rounded-2xl border border-slate-700 shadow-lg">

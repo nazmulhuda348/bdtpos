@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import Barcode from 'react-barcode';
 import { Product, Store, User, UserRole, Sale, Expense, Supplier, Purchase } from '../types';
@@ -226,6 +225,8 @@ const Inventory: React.FC<InventoryProps> = ({
     const buyingPrice = parseFloat(form.pBuyingPrice.value);
     const totalCost = quantity * buyingPrice;
     const dueAmount = totalCost - paidAmount;
+    
+    const productName = matchedProduct?.name || form.pName.value;
 
     if (matchedProduct) {
       onUpdate(matchedProduct.id, { 
@@ -234,7 +235,7 @@ const Inventory: React.FC<InventoryProps> = ({
       });
     } else {
       const data = {
-        name: form.pName.value,
+        name: productName,
         sku: scannedSku || form.pSku.value,
         category: form.pCat.value,
         quantity: quantity,
@@ -250,7 +251,7 @@ const Inventory: React.FC<InventoryProps> = ({
       }
     }
 
-    // Common logic for both new and existing products if supplier is selected
+    // --- সাপ্লায়ার থাকলে Purchases এ যোগ হবে, না থাকলে Expenses এ Operation Cost হিসেবে যোগ হবে ---
     if (supplier) {
       // Log expense if paid amount > 0
       if (paidAmount > 0) {
@@ -272,8 +273,8 @@ const Inventory: React.FC<InventoryProps> = ({
         poNumber: `${matchedProduct ? 'INV' : 'REG'}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`,
         supplierId: supplier.id,
         supplierName: supplier.name,
-        productId: matchedProduct?.id || 'NEW_ASSET',
-        productName: matchedProduct?.name || form.pName.value,
+        productId: (matchedProduct?.id || null) as unknown as string,
+        productName: productName,
         quantity: quantity,
         unitCost: buyingPrice,
         totalCost: totalCost,
@@ -281,6 +282,24 @@ const Inventory: React.FC<InventoryProps> = ({
         amountDue: dueAmount,
         storeId: currentStore.id
       });
+    } else {
+      // --- নতুন লজিক: সাপ্লায়ার না থাকলে সরাসরি Operational Cost হিসেবে যোগ হবে ---
+      if (totalCost > 0 && !editingProduct) { // এডিটিং এর সময় পুনরায় খরচ যোগ না করার জন্য
+        onAddExpense({
+          storeId: currentStore.id,
+          category: "Operational Cost",
+          amount: totalCost,
+          description: `Cash purchase for new stock: ${productName} (${quantity} units)`
+        });
+      } else if (matchedProduct && totalCost > 0) {
+        // যদি এক্সিস্টিং প্রোডাক্টের স্টক বাড়ে এবং সাপ্লায়ার না থাকে
+        onAddExpense({
+          storeId: currentStore.id,
+          category: "Operational Cost",
+          amount: totalCost,
+          description: `Restock cash purchase: ${productName} (+${quantity} units)`
+        });
+      }
     }
     
     setShowSuccessToast(true);
@@ -300,7 +319,6 @@ const Inventory: React.FC<InventoryProps> = ({
             <button onClick={() => setBarcodeProduct(null)} className="text-slate-500 hover:text-white"><X className="w-6 h-6" /></button>
           </div>
           <div className="p-10 flex flex-col items-center">
-            {/* The Print Area: Will be captured by @media print */}
             <div id="barcode-print-area" className="bg-white p-6 rounded-2xl shadow-xl flex flex-col items-center justify-center">
               <p className="text-slate-950 font-black text-xs mb-1 text-center">{barcodeProduct.name}</p>
               <p className="text-slate-500 font-bold text-[8px] mb-3 text-center uppercase tracking-widest">SKU: {barcodeProduct.sku}</p>
@@ -338,7 +356,6 @@ const Inventory: React.FC<InventoryProps> = ({
     );
   };
 
-  // Main View: Full Ledger
   if (!isRegistrationActive) {
     return (
       <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -445,9 +462,6 @@ const Inventory: React.FC<InventoryProps> = ({
           </div>
         </div>
         
-        <BarcodeModal />
-        
-        {/* Category Modal */}
         {isCategoryModalOpen && (
           <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
              <div className="bg-slate-900 w-full max-w-lg rounded-[2.5rem] border border-slate-800 shadow-2xl p-8 relative animate-in zoom-in-95 duration-300">
@@ -476,10 +490,8 @@ const Inventory: React.FC<InventoryProps> = ({
     );
   }
 
-  // Session View: Split Screen (Register Form Left, Asset Ledger Right)
   return (
     <div className="h-[calc(100vh-140px)] flex flex-col lg:flex-row gap-8 animate-in fade-in zoom-in-95 duration-500 overflow-hidden">
-      {/* LEFT: Record New Asset Page */}
       <div className="lg:w-[450px] flex flex-col bg-slate-900 border border-slate-800 rounded-[2.5rem] shadow-2xl p-8 overflow-y-auto custom-scrollbar relative">
         <div className="mb-6 flex items-center justify-between">
           <div>
@@ -501,7 +513,6 @@ const Inventory: React.FC<InventoryProps> = ({
         )}
 
         <form onSubmit={handleRegisterSubmit} className="space-y-6 flex-1">
-          {/* SKU IDENTIFIER SEARCH */}
           <div className="space-y-2">
             <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2 text-amber-500">sku identifier</label>
             <div className="relative group">
@@ -522,13 +533,12 @@ const Inventory: React.FC<InventoryProps> = ({
             </div>
           </div>
 
-          {/* SCANNER VIEWPORT */}
           {isScanning && (
             <div className="mb-6 animate-in fade-in duration-300">
               <div className="relative aspect-video bg-slate-800 rounded-3xl overflow-hidden border-2 border-amber-400/50">
                 <div id="reg-scanner-reader" className="w-full h-full"></div>
                 <div className="absolute top-0 left-0 w-full h-1 bg-white/30 animate-scan pointer-events-none"></div>
-                <button onClick={() => { setIsScanning(false); safeStopScanner(); }} className="absolute bottom-4 right-4 bg-rose-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase">Cancel</button>
+                <button type="button" onClick={() => { setIsScanning(false); safeStopScanner(); }} className="absolute bottom-4 right-4 bg-rose-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase">Cancel</button>
               </div>
             </div>
           )}
@@ -540,7 +550,6 @@ const Inventory: React.FC<InventoryProps> = ({
             </div>
           )}
 
-          {/* ASSET IDENTIFIED CALLOUT */}
           {matchedProduct && !editingProduct && (
             <div className="bg-emerald-500/10 border border-emerald-500/20 p-4 rounded-2xl flex items-center gap-4 animate-in slide-in-from-top-2">
               <div className="p-2.5 bg-emerald-500 rounded-xl text-slate-950"><CheckCircle2 className="w-5 h-5" /></div>
@@ -552,7 +561,6 @@ const Inventory: React.FC<InventoryProps> = ({
             </div>
           )}
 
-          {/* READ-ONLY AUTO-FILL & MANUAL INPUTS */}
           <div className="space-y-5">
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Asset Name</label>
@@ -583,7 +591,6 @@ const Inventory: React.FC<InventoryProps> = ({
               </div>
             </div>
 
-            {/* Supplier Profile & To Be Paid */}
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2 flex items-center gap-1">
@@ -594,7 +601,7 @@ const Inventory: React.FC<InventoryProps> = ({
                     name="pSupplier" 
                     className="w-full px-5 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 appearance-none"
                   >
-                    <option value="">Select Supplier</option>
+                    <option value="">(None - Cash Buy)</option>
                     {suppliers.filter(s => s.storeId === currentStore.id).map(s => (
                       <option key={s.id} value={s.id}>{s.name}</option>
                     ))}
@@ -672,7 +679,6 @@ const Inventory: React.FC<InventoryProps> = ({
         </form>
       </div>
 
-      {/* RIGHT: ASSET LEDGER (Synchronized View) */}
       <div className="flex-1 flex flex-col bg-slate-900/50 backdrop-blur-md border border-slate-800 rounded-[2.5rem] shadow-2xl overflow-hidden">
         <div className="p-8 border-b border-slate-800 flex items-center justify-between">
            <div>
@@ -752,7 +758,6 @@ const Inventory: React.FC<InventoryProps> = ({
            </table>
         </div>
 
-        {/* Bottom Stats Summary */}
         <div className="p-8 bg-slate-950 border-t border-slate-800">
            <div className="flex items-center justify-between">
               <div>
@@ -768,8 +773,6 @@ const Inventory: React.FC<InventoryProps> = ({
            </div>
         </div>
       </div>
-
-      <BarcodeModal />
 
       <style>{`
         @keyframes scan {

@@ -1,33 +1,16 @@
 import React, { useMemo } from 'react';
-import { Product, Store, InventoryStats, Sale, Expense } from '../types';
+import { Product, Store, Sale, Expense } from '../types';
 import { 
-  Package, 
-  AlertTriangle, 
-  TrendingDown, 
-  Layers, 
   DollarSign, 
-  BarChart3, 
   TrendingUp, 
-  Wallet, 
-  ArrowUpRight, 
-  ArrowDownRight,
-  Download,
-  Calendar,
-  PieChart,
-  LayoutDashboard
+  Package, 
+  AlertTriangle,
+  ShoppingCart,
+  Zap,
+  Wallet,
+  LayoutDashboard,
+  Check // <-- এই আইকনটি মিসিং ছিল
 } from 'lucide-react';
-import { 
-  AreaChart, 
-  Area, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  ResponsiveContainer,
-  BarChart,
-  Bar,
-  Cell
-} from 'recharts';
 
 interface DashboardProps {
   products: Product[];
@@ -37,289 +20,196 @@ interface DashboardProps {
 }
 
 const Dashboard: React.FC<DashboardProps> = ({ products, currentStore, sales, expenses }) => {
-  const storeProducts = useMemo(() => 
-    products.filter(p => p.storeId === currentStore.id), 
-    [products, currentStore]
-  );
 
-  const storeSales = useMemo(() => 
-    sales.filter(s => s.storeId === currentStore.id),
-    [sales, currentStore]
-  );
+  const inventoryStats = useMemo(() => {
+    const storeProducts = products.filter(p => p.storeId === currentStore.id);
+    const totalItems = storeProducts.length;
+    // Stock Equity = Quantity * Buying Price
+    const stockEquity = storeProducts.reduce((acc, p) => acc + (p.quantity * p.buyingPrice), 0);
+    const lowStockCount = storeProducts.filter(p => p.quantity <= p.minThreshold).length;
 
-  const storeExpenses = useMemo(() => 
-    expenses.filter(e => e.storeId === currentStore.id),
-    [expenses, currentStore]
-  );
+    return { totalItems, stockEquity, lowStockCount, storeProducts };
+  }, [products, currentStore.id]);
 
-  const stats: InventoryStats = useMemo(() => {
-    const totalRev = storeSales.reduce((sum, s) => sum + s.totalPrice, 0);
-    const totalCOGS = storeSales.reduce((sum, s) => sum + (s.quantity * s.buyingPrice), 0);
-    const totalExp = storeExpenses.reduce((sum, e) => sum + e.amount, 0);
-    const grossProfit = totalRev - totalCOGS;
+  const todayStats = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0];
+    const todaySales = sales.filter(s => s.storeId === currentStore.id && s.timestamp.startsWith(today));
+    const todayExpenses = expenses.filter(e => e.storeId === currentStore.id && e.timestamp.startsWith(today));
     
-    return {
-      totalItems: storeProducts.reduce((sum, p) => sum + p.quantity, 0),
-      lowStockCount: storeProducts.filter(p => p.quantity <= p.minThreshold && p.quantity > 0).length,
-      totalValue: storeProducts.reduce((sum, p) => sum + (p.quantity * p.price), 0),
-      outOfStock: storeProducts.filter(p => p.quantity === 0).length,
-      totalRevenue: totalRev,
-      totalExpenses: totalExp,
-      totalProfit: grossProfit - totalExp
-    };
-  }, [storeProducts, storeSales, storeExpenses]);
+    let totalSales = 0;
+    let todayCash = 0;
+    let totalProfit = 0;
 
-  const trendData = useMemo(() => {
-    const months = [];
-    const now = new Date();
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const monthName = d.toLocaleString('default', { month: 'short' });
-      const monthKey = d.toISOString().substring(0, 7); // YYYY-MM
-      
-      const monthSales = storeSales.filter(s => s.timestamp.startsWith(monthKey));
-      const monthExpenses = storeExpenses.filter(e => e.timestamp.startsWith(monthKey));
-      
-      const revenue = monthSales.reduce((sum, s) => sum + s.totalPrice, 0);
-      const expense = monthExpenses.reduce((sum, e) => sum + e.amount, 0);
-      const profit = revenue - expense;
-      
-      months.push({
-        name: monthName,
-        revenue,
-        profit,
-        expense
-      });
-    }
-    return months;
-  }, [storeSales, storeExpenses]);
+    todaySales.forEach(s => {
+      const isPayment = s.invoiceId?.startsWith('PAY-') || s.productId === 'PAYMENT_RECEIVED' || s.productId === 'SUPPLIER_PAYMENT';
 
-  const exportToCSV = () => {
-    const headers = ['Metric', 'Value'];
-    const data = [
-      ['Total Revenue', stats.totalRevenue.toFixed(2)],
-      ['Total Expenses', stats.totalExpenses.toFixed(2)],
-      ['Net Profit', stats.totalProfit.toFixed(2)],
-      ['Total Value of Stock', stats.totalValue.toFixed(2)],
-      ['Total Items in Stock', stats.totalItems],
-      ['Low Stock Items', stats.lowStockCount],
-      ['Out of Stock Items', stats.outOfStock]
-    ];
+      todayCash += (s.amountPaid || 0);
+
+      if (!isPayment) {
+        totalSales += s.totalPrice;
+        const product = products.find(p => p.id === s.productId);
+        const buyingPrice = product ? product.buyingPrice : s.buyingPrice;
+        const cost = buyingPrice * s.quantity;
+        totalProfit += (s.totalPrice - cost);
+      }
+    });
     
-    const csvContent = [headers, ...data].map(e => e.join(",")).join("\n");
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement("a");
-    const url = URL.createObjectURL(blob);
-    link.setAttribute("href", url);
-    link.setAttribute("download", `dashboard_summary_${currentStore.name.replace(/\s+/g, '_')}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
+    const totalExpense = todayExpenses.reduce((acc, e) => acc + e.amount, 0);
+    const netBalance = todayCash - totalExpense;
 
-  const StatCard = ({ title, value, icon: Icon, detail, isCurrency, trend }: any) => (
-    <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 group hover:border-amber-400/30 transition-all duration-500">
-      <div className="flex justify-between items-start mb-6">
-        <div className="p-4 bg-slate-800 rounded-2xl group-hover:bg-amber-400 group-hover:text-slate-950 transition-all duration-500 shadow-xl border border-slate-700/50">
-          <Icon className="w-6 h-6" />
-        </div>
-        <div className="text-right">
-          <span className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em]">{title}</span>
-          {trend && (
-            <div className={`flex items-center justify-end gap-1 text-xs mt-1 font-bold ${trend > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-              {trend > 0 ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
-              {Math.abs(trend)}%
-            </div>
-          )}
-        </div>
-      </div>
-      <div className="flex items-end gap-1">
-        <h3 className={`text-3xl font-black ${title === 'Net Profit' && value < 0 ? 'text-rose-500' : 'text-white'}`}>
-          {isCurrency ? `${value < 0 ? '-' : ''}$${Math.abs(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : value.toLocaleString()}
-        </h3>
-      </div>
-      <p className="mt-3 text-xs font-medium text-slate-500">{detail}</p>
-    </div>
-  );
+    return { totalSales, todayCash, totalProfit, totalExpense, netBalance };
+  }, [sales, products, expenses, currentStore.id]);
+
+  const lowStockList = useMemo(() => {
+    return inventoryStats.storeProducts.filter(p => p.quantity <= p.minThreshold);
+  }, [inventoryStats.storeProducts]);
 
   return (
-    <div className="space-y-10 animate-in fade-in duration-700">
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
+      {/* Header */}
+      <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
         <div>
           <h1 className="text-3xl font-black text-white tracking-tight flex items-center gap-3">
-            Enterprise Ledger
-            <span className="bg-amber-400/10 text-amber-400 text-xs py-1 px-3 rounded-full border border-amber-400/20 uppercase tracking-widest font-bold">Live</span>
+            Command Center
+            <span className="bg-amber-400/10 text-amber-400 text-xs py-1 px-3 rounded-full border border-amber-400/20 uppercase tracking-widest font-bold">Overview</span>
           </h1>
-          <p className="text-slate-500 mt-1 font-medium">Strategic intelligence for <span className="gold-gradient-text font-bold">{currentStore.name}</span></p>
-        </div>
-        <div className="flex items-center gap-3">
-          <button 
-            onClick={exportToCSV}
-            className="p-4 bg-slate-900 border border-slate-800 text-slate-400 rounded-2xl hover:text-white transition-all shadow-xl"
-          >
-            <Download className="w-5 h-5" />
-          </button>
-          <div className="flex items-center gap-3 bg-slate-900 border border-slate-800 p-1.5 rounded-2xl">
-            <button className="px-5 py-2 rounded-xl text-xs font-bold bg-amber-400 text-slate-950 shadow-lg">Real-time</button>
-            <button className="px-5 py-2 rounded-xl text-xs font-bold text-slate-400 hover:text-white transition-colors">Historical</button>
-          </div>
+          <p className="text-slate-500 font-medium mt-1">Real-time metrics for <span className="gold-gradient-text font-black">{currentStore.name}</span></p>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
-        <StatCard 
-          title="Net Profit" 
-          value={stats.totalProfit} 
-          icon={TrendingUp} 
-          detail="Total yield after operational costs"
-          isCurrency
-          trend={12.5}
-        />
-        <StatCard 
-          title="Gross Revenue" 
-          value={stats.totalRevenue} 
-          icon={DollarSign} 
-          detail="Total capital intake this cycle"
-          isCurrency
-          trend={8.2}
-        />
-        <StatCard 
-          title="Operations Cost" 
-          value={stats.totalExpenses} 
-          icon={Wallet} 
-          detail="Overhead and logistics spending"
-          isCurrency
-          trend={-2.4}
-        />
-        <StatCard 
-          title="Total Net Balance" 
-          value={stats.totalRevenue - stats.totalExpenses} 
-          icon={LayoutDashboard} 
-          detail="Revenue minus operational costs"
-          isCurrency
-        />
-        <StatCard 
-          title="Stock Equity" 
-          value={stats.totalValue} 
-          icon={BarChart3} 
-          detail="Market value of current holdings"
-          isCurrency
-        />
+      {/* Today's Financial Overview Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+        <div className="bg-slate-900/50 backdrop-blur-md p-5 rounded-[2rem] border border-slate-800 shadow-xl flex items-center gap-4 group hover:border-slate-500/30 transition-all">
+          <div className="w-10 h-10 bg-slate-800 rounded-xl flex items-center justify-center text-slate-400 group-hover:scale-110 transition-transform">
+            <ShoppingCart className="w-5 h-5" />
+          </div>
+          <div>
+            <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Today's Sales</p>
+            <h3 className="text-lg font-black text-white tracking-tighter">${todayStats.totalSales.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+          </div>
+        </div>
+
+        <div className="bg-slate-900/50 backdrop-blur-md p-5 rounded-[2rem] border border-slate-800 shadow-xl flex items-center gap-4 group hover:border-amber-500/30 transition-all">
+          <div className="w-10 h-10 bg-amber-400/10 rounded-xl flex items-center justify-center text-amber-400 group-hover:scale-110 transition-transform">
+            <DollarSign className="w-5 h-5" />
+          </div>
+          <div>
+            <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Today's Cash</p>
+            <h3 className="text-lg font-black text-amber-400 tracking-tighter">${todayStats.todayCash.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+          </div>
+        </div>
+
+        <div className="bg-slate-900/50 backdrop-blur-md p-5 rounded-[2rem] border border-slate-800 shadow-xl flex items-center gap-4 group hover:border-emerald-500/30 transition-all">
+          <div className="w-10 h-10 bg-emerald-400/10 rounded-xl flex items-center justify-center text-emerald-400 group-hover:scale-110 transition-transform">
+            <TrendingUp className="w-5 h-5" />
+          </div>
+          <div>
+            <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Today's Profit</p>
+            <h3 className="text-lg font-black text-emerald-400 tracking-tighter">${todayStats.totalProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+          </div>
+        </div>
+
+        <div className="bg-slate-900/50 backdrop-blur-md p-5 rounded-[2rem] border border-slate-800 shadow-xl flex items-center gap-4 group hover:border-rose-500/30 transition-all">
+          <div className="w-10 h-10 bg-rose-400/10 rounded-xl flex items-center justify-center text-rose-400 group-hover:scale-110 transition-transform">
+            <Zap className="w-5 h-5" />
+          </div>
+          <div>
+            <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Today's Expense</p>
+            <h3 className="text-lg font-black text-rose-400 tracking-tighter">${todayStats.totalExpense.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+          </div>
+        </div>
+
+        <div className="bg-slate-900/50 backdrop-blur-md p-5 rounded-[2rem] border border-slate-800 shadow-xl flex items-center gap-4 group hover:border-blue-500/30 transition-all">
+          <div className="w-10 h-10 bg-blue-400/10 rounded-xl flex items-center justify-center text-blue-400 group-hover:scale-110 transition-transform">
+            <Wallet className="w-5 h-5" />
+          </div>
+          <div>
+            <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Net Balance</p>
+            <h3 className={`text-lg font-black tracking-tighter ${todayStats.netBalance >= 0 ? 'text-blue-400' : 'text-rose-400'}`}>
+              ${todayStats.netBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </h3>
+          </div>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-2 bg-slate-900/50 backdrop-blur-md rounded-[2.5rem] border border-slate-800 overflow-hidden shadow-2xl">
-          <div className="px-8 py-7 border-b border-slate-800 flex justify-between items-center bg-slate-900/30">
-            <div>
-              <h3 className="font-black text-white text-lg tracking-tight">Financial Performance</h3>
-              <p className="text-xs text-slate-500 font-medium">6-Month Revenue vs Profit Trend</p>
-            </div>
-            <div className="flex gap-6">
-              <div className="flex items-center gap-2">
-                <div className="w-2.5 h-2.5 bg-amber-400 rounded-full shadow-[0_0_10px_rgba(251,191,36,0.5)]"></div>
-                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Revenue</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-2.5 h-2.5 bg-emerald-400 rounded-full shadow-[0_0_10px_rgba(52,211,153,0.5)]"></div>
-                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Profit</span>
-              </div>
-            </div>
+        
+        {/* Inventory Summary Card */}
+        <div className="lg:col-span-1 bg-gradient-to-br from-slate-900 to-slate-900/50 border border-slate-800 rounded-[2.5rem] shadow-2xl p-8 relative overflow-hidden">
+          <div className="absolute top-0 right-0 p-8 opacity-10">
+            <Package className="w-32 h-32 text-amber-400" />
           </div>
-          <div className="p-8 h-[400px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={trendData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="colorRev" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#fbbf24" stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor="#fbbf24" stopOpacity={0}/>
-                  </linearGradient>
-                  <linearGradient id="colorProfit" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#34d399" stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor="#34d399" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                <XAxis 
-                  dataKey="name" 
-                  stroke="#64748b" 
-                  fontSize={10} 
-                  fontWeight="bold" 
-                  axisLine={false} 
-                  tickLine={false} 
-                  dy={10}
-                />
-                <YAxis 
-                  stroke="#64748b" 
-                  fontSize={10} 
-                  fontWeight="bold" 
-                  axisLine={false} 
-                  tickLine={false} 
-                  tickFormatter={(value) => `$${value}`}
-                />
-                <Tooltip 
-                  contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: '16px', fontSize: '10px', fontWeight: 'bold' }}
-                  itemStyle={{ color: '#fff' }}
-                />
-                <Area 
-                  type="monotone" 
-                  dataKey="revenue" 
-                  stroke="#fbbf24" 
-                  strokeWidth={3} 
-                  fillOpacity={1} 
-                  fill="url(#colorRev)" 
-                />
-                <Area 
-                  type="monotone" 
-                  dataKey="profit" 
-                  stroke="#34d399" 
-                  strokeWidth={3} 
-                  fillOpacity={1} 
-                  fill="url(#colorProfit)" 
-                />
-              </AreaChart>
-            </ResponsiveContainer>
+          <h2 className="text-lg font-black text-white uppercase tracking-widest mb-8 flex items-center gap-3">
+            <LayoutDashboard className="w-5 h-5 text-amber-500" />
+            Inventory Status
+          </h2>
+          
+          <div className="space-y-6 relative z-10">
+            <div>
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1">Total Assets</p>
+              <p className="text-4xl font-black text-white">{inventoryStats.totalItems}</p>
+            </div>
+            
+            <div>
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1">Stock Equity (Purchase Value)</p>
+              <p className="text-4xl font-black text-emerald-400">${inventoryStats.stockEquity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+            </div>
+
+            <div className="pt-6 border-t border-slate-800/50">
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-500" /> Action Required
+              </p>
+              <p className="text-2xl font-black text-rose-400">{inventoryStats.lowStockCount} <span className="text-sm font-bold text-slate-500 uppercase tracking-widest">items low on stock</span></p>
+            </div>
           </div>
         </div>
 
-        <div className="bg-slate-900/50 backdrop-blur-md rounded-[2.5rem] border border-slate-800 p-8 shadow-2xl flex flex-col">
-           <h3 className="font-black text-white mb-8 tracking-tight text-lg flex items-center gap-2">
-             <PieChart className="w-5 h-5 text-amber-400" />
-             Expense Distribution
-           </h3>
-           <div className="flex-1 space-y-6 overflow-y-auto custom-scrollbar pr-2">
-              {Array.from(new Set(storeExpenses.map(e => e.category))).map(cat => {
-                const total = storeExpenses.filter(e => e.category === cat).reduce((s, e) => s + e.amount, 0);
-                const perc = (total / (stats.totalExpenses || 1)) * 100;
-                return (
-                  <div key={cat} className="group">
-                    <div className="flex justify-between text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 group-hover:text-amber-400 transition-colors">
-                      <span>{cat}</span>
-                      <span className="text-slate-300">${total.toFixed(2)}</span>
-                    </div>
-                    <div className="w-full h-3 bg-slate-800 rounded-full overflow-hidden border border-slate-700/50">
-                       <div className="bg-gradient-to-r from-amber-600 to-amber-400 h-full rounded-full transition-all duration-500" style={{ width: `${perc}%` }}></div>
-                    </div>
-                  </div>
-                )
-              })}
-              {storeExpenses.length === 0 && (
-                <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
-                  <div className="p-4 bg-slate-800 rounded-full text-slate-600">
-                    <Wallet className="w-8 h-8" />
-                  </div>
-                  <p className="text-slate-500 text-sm font-medium">No operational expenses recorded.</p>
-                </div>
-              )}
-           </div>
-           
-           <div className="mt-8 pt-6 border-t border-slate-800">
-              <div className="flex justify-between items-center">
-                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Total Overhead</p>
-                <p className="text-xl font-black text-rose-400">${stats.totalExpenses.toFixed(2)}</p>
-              </div>
-           </div>
+        {/* Low Stock Alerts Table */}
+        <div className="lg:col-span-2 bg-slate-900/50 backdrop-blur-md border border-slate-800 rounded-[2.5rem] shadow-2xl flex flex-col overflow-hidden">
+          <div className="p-8 border-b border-slate-800 flex items-center justify-between">
+             <h2 className="text-lg font-black text-white tracking-widest uppercase flex items-center gap-3">
+               <AlertTriangle className="w-5 h-5 text-rose-500" />
+               Low Stock Alerts
+             </h2>
+             <span className="bg-rose-500/10 text-rose-400 px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border border-rose-500/20">
+               {lowStockList.length} Warnings
+             </span>
+          </div>
+
+          <div className="flex-1 overflow-y-auto custom-scrollbar max-h-[400px]">
+            <table className="w-full text-left">
+              <thead className="sticky top-0 bg-slate-900 z-10">
+                <tr className="text-[10px] font-black text-slate-500 uppercase tracking-widest border-b border-slate-800">
+                  <th className="px-8 py-5">Product Name</th>
+                  <th className="px-8 py-5">SKU</th>
+                  <th className="px-8 py-5 text-right">Current Qty</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/50">
+                {lowStockList.map((p) => (
+                  <tr key={p.id} className="group hover:bg-slate-800/40 transition-all">
+                    <td className="px-8 py-5 font-bold text-white text-sm">{p.name}</td>
+                    <td className="px-8 py-5 text-xs font-bold text-slate-500 uppercase tracking-widest">{p.sku}</td>
+                    <td className="px-8 py-5 text-right">
+                      <span className="text-rose-400 font-black px-3 py-1 bg-rose-500/10 rounded-lg text-sm border border-rose-500/20">
+                        {p.quantity} left
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+                {lowStockList.length === 0 && (
+                  <tr>
+                    <td colSpan={3} className="px-8 py-20 text-center opacity-40 grayscale">
+                       <Check className="w-12 h-12 mx-auto text-emerald-500 mb-4" />
+                       <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Inventory levels are optimal</p>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
+
       </div>
     </div>
   );

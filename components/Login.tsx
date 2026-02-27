@@ -1,6 +1,6 @@
-
 import React, { useState } from 'react';
-import { User } from '../types';
+import { User, UserRole } from '../types';
+import { supabase } from '../lib/supabase';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   User as UserIcon, 
@@ -13,11 +13,10 @@ import {
 } from 'lucide-react';
 
 interface LoginProps {
-  users: User[];
   onLogin: (user: User) => void;
 }
 
-const Login: React.FC<LoginProps> = ({ users, onLogin }) => {
+const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -29,15 +28,34 @@ const Login: React.FC<LoginProps> = ({ users, onLogin }) => {
     setError(null);
     setIsLoading(true);
 
-    // Simulate a brief network delay for premium feel
-    await new Promise(resolve => setTimeout(resolve, 800));
+    try {
+      // Supabase থেকে ইউজার চেক করা হচ্ছে
+      const { data, error: fetchError } = await supabase
+        .from('users')
+        .select('*')
+        .ilike('name', username) // নামের ছোট-বড় হাতের অক্ষর ইগনোর করবে
+        .eq('password', password)
+        .single();
 
-    const user = users.find(u => u.name.toLowerCase() === username.toLowerCase() && u.password === password);
+      if (fetchError || !data) {
+        setError('Invalid credentials. Access denied to global directory.');
+        setIsLoading(false);
+        return;
+      }
 
-    if (user) {
-      onLogin(user);
-    } else {
-      setError('Invalid credentials. Access denied to global directory.');
+      // ডাটাবেস থেকে পাওয়া ইউজারকে অ্যাপের ফর্মেটে সাজানো
+      const loggedInUser: User = {
+        id: data.id,
+        name: data.name,
+        role: data.role as UserRole,
+        avatar: data.avatar || '',
+        assignedStoreId: data.assignedStoreId,
+        permissions: data.permissions
+      };
+
+      onLogin(loggedInUser);
+    } catch (err) {
+      setError('Connection failed. Please check your internet or database.');
       setIsLoading(false);
     }
   };

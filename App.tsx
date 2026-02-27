@@ -1,6 +1,6 @@
-
 import React, { useState, useEffect, useCallback } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { supabase } from './lib/supabase';
 import Layout from './components/Layout';
 import Dashboard from './components/Dashboard';
 import Inventory from './components/Inventory';
@@ -15,540 +15,321 @@ import Scanner from './components/Scanner';
 import Settings from './components/Settings';
 import Login from './components/Login';
 import { Store, Product, User, UserRole, Sale, Expense, Customer, Supplier, Purchase, UserPermissions } from './types';
-import { INITIAL_STORES, INITIAL_PRODUCTS, INITIAL_USER, INITIAL_CATEGORIES } from './constants';
 
 const App: React.FC = () => {
-  const [stores, setStores] = useState<Store[]>(() => {
-    try {
-      const saved = localStorage.getItem('omni_stores');
-      const parsed = saved ? JSON.parse(saved) : null;
-      return Array.isArray(parsed) ? parsed : INITIAL_STORES;
-    } catch (e) {
-      console.error("Failed to parse stores from localStorage", e);
-      return INITIAL_STORES;
-    }
+  // --- ১. অথেন্টিকেশন স্টেট ---
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => localStorage.getItem('omni_auth') === 'true');
+  const [currentUser, setCurrentUser] = useState<User | null>(() => {
+    const saved = localStorage.getItem('omni_user');
+    return saved ? JSON.parse(saved) : null;
   });
 
-  const [products, setProducts] = useState<Product[]>(() => {
-    try {
-      const saved = localStorage.getItem('omni_products');
-      const parsed = saved ? JSON.parse(saved) : null;
-      return Array.isArray(parsed) ? parsed : INITIAL_PRODUCTS;
-    } catch (e) {
-      console.error("Failed to parse products from localStorage", e);
-      return INITIAL_PRODUCTS;
-    }
-  });
+  // --- ২. ডাটা স্টেট ---
+  const [stores, setStores] = useState<Store[]>([]);
+  const [currentStore, setCurrentStore] = useState<Store | null>(null);
+  const [users, setUsers] = useState<User[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [sales, setSales] = useState<Sale[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [purchases, setPurchases] = useState<Purchase[]>([]);
+  const [isDataLoading, setIsDataLoading] = useState(false);
 
-  const [users, setUsers] = useState<User[]>(() => {
-    try {
-      const saved = localStorage.getItem('omni_users');
-      const parsed = saved ? JSON.parse(saved) : null;
-      return Array.isArray(parsed) && parsed.length > 0 ? parsed : [INITIAL_USER];
-    } catch (e) {
-      console.error("Failed to parse users from localStorage", e);
-      return [INITIAL_USER];
-    }
-  });
-
-  const [sales, setSales] = useState<Sale[]>(() => {
-    try {
-      const saved = localStorage.getItem('omni_sales');
-      const parsed = saved ? JSON.parse(saved) : null;
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (e) {
-      console.error("Failed to parse sales from localStorage", e);
-      return [];
-    }
-  });
-
-  const [expenses, setExpenses] = useState<Expense[]>(() => {
-    try {
-      const saved = localStorage.getItem('omni_expenses');
-      const parsed = saved ? JSON.parse(saved) : null;
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (e) {
-      console.error("Failed to parse expenses from localStorage", e);
-      return [];
-    }
-  });
-
-  const [customers, setCustomers] = useState<Customer[]>(() => {
-    try {
-      const saved = localStorage.getItem('omni_customers');
-      const parsed = saved ? JSON.parse(saved) : null;
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (e) {
-      console.error("Failed to parse customers from localStorage", e);
-      return [];
-    }
-  });
-
-  const [suppliers, setSuppliers] = useState<Supplier[]>(() => {
-    try {
-      const saved = localStorage.getItem('omni_suppliers');
-      const parsed = saved ? JSON.parse(saved) : null;
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (e) {
-      console.error("Failed to parse suppliers from localStorage", e);
-      return [];
-    }
-  });
-
-  const [purchases, setPurchases] = useState<Purchase[]>(() => {
-    try {
-      const saved = localStorage.getItem('omni_purchases');
-      const parsed = saved ? JSON.parse(saved) : null;
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (e) {
-      console.error("Failed to parse purchases from localStorage", e);
-      return [];
-    }
-  });
-
+  // 🔴 ক্যাটাগরি স্টেট (Local Storage সহ) 🔴
   const [categories, setCategories] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('omni_categories');
-      const parsed = saved ? JSON.parse(saved) : null;
-      return Array.isArray(parsed) ? parsed : INITIAL_CATEGORIES;
-    } catch (e) {
-      console.error("Failed to parse categories from localStorage", e);
-      return INITIAL_CATEGORIES;
-    }
+    const saved = localStorage.getItem('omni_categories');
+    return saved ? JSON.parse(saved) : ['Electronics', 'Clothing', 'Food', 'Others'];
   });
 
   const [expenseCategories, setExpenseCategories] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('omni_expense_categories');
-      const parsed = saved ? JSON.parse(saved) : null;
-      return Array.isArray(parsed) ? parsed : ['Salary', 'Rent', 'Transport', 'Utilities', 'Maintenance', 'Marketing', 'Others'];
-    } catch (e) {
-      console.error("Failed to parse expense categories from localStorage", e);
-      return ['Salary', 'Rent', 'Transport', 'Utilities', 'Maintenance', 'Marketing', 'Others'];
-    }
+    const saved = localStorage.getItem('omni_expense_categories');
+    return saved ? JSON.parse(saved) : ['Salary', 'Rent', 'Transport', 'Utilities', 'Wastage'];
   });
 
-  const [currentStore, setCurrentStore] = useState<Store>(() => stores[0] || INITIAL_STORES[0]);
-  const [currentUser, setCurrentUser] = useState<User>(() => {
-    try {
-      const saved = localStorage.getItem('omni_current_user');
-      return saved ? JSON.parse(saved) : (users[0] || INITIAL_USER);
-    } catch {
-      return users[0] || INITIAL_USER;
-    }
-  });
+  // --- ৩. স্টেট রিসেট ফাংশন ---
+  const resetAllData = useCallback(() => {
+    setProducts([]);
+    setSales([]);
+    setExpenses([]);
+    setCustomers([]);
+    setSuppliers([]);
+    setPurchases([]);
+    setUsers([]);
+  }, []);
 
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
-    return localStorage.getItem('omni_is_authenticated') === 'true';
-  });
-
-  // Sync current store if assigned for Manager/Salesman
+  // --- ৪. স্টোর এবং ইউজার লিস্ট লোড করা ---
   useEffect(() => {
-    if (currentUser.role !== UserRole.SUPER_ADMIN && currentUser.assignedStoreId) {
-      const assigned = stores.find(s => s.id === currentUser.assignedStoreId);
-      if (assigned) setCurrentStore(assigned);
-    }
-  }, [currentUser, stores]);
+    if (!isAuthenticated || !currentUser) return;
 
-  // Persistence
-  useEffect(() => {
-    localStorage.setItem('omni_stores', JSON.stringify(stores));
-  }, [stores]);
-
-  useEffect(() => {
-    localStorage.setItem('omni_products', JSON.stringify(products));
-  }, [products]);
-
-  useEffect(() => {
-    localStorage.setItem('omni_users', JSON.stringify(users));
-  }, [users]);
-
-  useEffect(() => {
-    localStorage.setItem('omni_sales', JSON.stringify(sales));
-  }, [sales]);
-
-  useEffect(() => {
-    localStorage.setItem('omni_expenses', JSON.stringify(expenses));
-  }, [expenses]);
-
-  useEffect(() => {
-    localStorage.setItem('omni_customers', JSON.stringify(customers));
-  }, [customers]);
-
-  useEffect(() => {
-    localStorage.setItem('omni_suppliers', JSON.stringify(suppliers));
-  }, [suppliers]);
-
-  useEffect(() => {
-    localStorage.setItem('omni_purchases', JSON.stringify(purchases));
-  }, [purchases]);
-
-  useEffect(() => {
-    localStorage.setItem('omni_categories', JSON.stringify(categories));
-  }, [categories]);
-
-  useEffect(() => {
-    localStorage.setItem('omni_expense_categories', JSON.stringify(expenseCategories));
-  }, [expenseCategories]);
-
-  useEffect(() => {
-    localStorage.setItem('omni_is_authenticated', isAuthenticated.toString());
-  }, [isAuthenticated]);
-
-  useEffect(() => {
-    localStorage.setItem('omni_current_user', JSON.stringify(currentUser));
-  }, [currentUser]);
-
-  const addProduct = useCallback((newProduct: Omit<Product, 'id' | 'lastUpdated'>) => {
-    const p: Product = {
-      ...newProduct,
-      id: Math.random().toString(36).substr(2, 9),
-      lastUpdated: new Date().toISOString()
-    };
-    setProducts(prev => [...prev, p]);
-  }, []);
-
-  const updateProduct = useCallback((id: string, updates: Partial<Product>) => {
-    setProducts(prev => prev.map(p => 
-      p.id === id ? { ...p, ...updates, lastUpdated: new Date().toISOString() } : p
-    ));
-  }, []);
-
-  const deleteProduct = useCallback((id: string) => {
-    setProducts(prev => prev.filter(p => p.id !== id));
-  }, []);
-
-  const addSale = useCallback((sale: Omit<Sale, 'id' | 'timestamp'>) => {
-    const newSale: Sale = {
-      ...sale,
-      id: Math.random().toString(36).substr(2, 9),
-      timestamp: new Date().toISOString()
-    };
-    setSales(prev => [newSale, ...prev]);
-  }, []);
-
-  const updateSale = useCallback((id: string, updates: Partial<Sale>) => {
-    setSales(prev => prev.map(s => s.id === id ? { ...s, ...updates } : s));
-  }, []);
-
-  const deleteSale = useCallback((id: string) => {
-    setSales(prev => prev.filter(s => s.id !== id));
-  }, []);
-
-  const addExpense = useCallback((expense: Omit<Expense, 'id' | 'timestamp'>) => {
-    const newExpense: Expense = {
-      ...expense,
-      id: Math.random().toString(36).substr(2, 9),
-      timestamp: new Date().toISOString()
-    };
-    setExpenses(prev => [newExpense, ...prev]);
-  }, []);
-
-  const updateExpense = useCallback((id: string, updates: Partial<Expense>) => {
-    setExpenses(prev => prev.map(e => 
-      e.id === id ? { ...e, ...updates } : e
-    ));
-  }, []);
-
-  const deleteExpense = useCallback((id: string) => {
-    if (window.confirm("Authorize Access: Are you sure you want to permanently purge this expenditure record?")) {
-      setExpenses(prev => prev.filter(e => e.id !== id));
-    }
-  }, []);
-
-  const addCustomer = useCallback((customer: Omit<Customer, 'id'>) => {
-    const newCustomer: Customer = {
-      ...customer,
-      id: 'CUST-' + Math.random().toString(36).substr(2, 5).toUpperCase()
-    };
-    setCustomers(prev => [...prev, newCustomer]);
-  }, []);
-
-  const updateCustomer = useCallback((id: string, updates: Partial<Customer>) => {
-    setCustomers(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c));
-  }, []);
-
-  const deleteCustomer = useCallback((id: string) => {
-    setCustomers(prev => prev.filter(c => c.id !== id));
-  }, []);
-
-  const updateCustomerDue = useCallback((id: string, amount: number) => {
-    setCustomers(prev => prev.map(c => c.id === id ? { ...c, totalDue: c.totalDue + amount } : c));
-  }, []);
-
-  const addSupplier = useCallback((supplier: Omit<Supplier, 'id'>) => {
-    const newSupplier: Supplier = {
-      ...supplier,
-      id: 'SUPP-' + Math.random().toString(36).substr(2, 5).toUpperCase()
-    };
-    setSuppliers(prev => [...prev, newSupplier]);
-  }, []);
-
-  const updateSupplier = useCallback((id: string, updates: Partial<Supplier>) => {
-    setSuppliers(prev => prev.map(s => s.id === id ? { ...s, ...updates } : s));
-  }, []);
-
-  const deleteSupplier = useCallback((id: string) => {
-    setSuppliers(prev => prev.filter(s => s.id !== id));
-  }, []);
-
-  const updateSupplierDue = useCallback((id: string, amount: number) => {
-    setSuppliers(prev => prev.map(s => s.id === id ? { ...s, totalDue: s.totalDue + amount } : s));
-  }, []);
-
-  const addPurchase = useCallback((purchase: Omit<Purchase, 'id' | 'timestamp'>) => {
-    const newPurchase: Purchase = {
-      ...purchase,
-      id: Math.random().toString(36).substr(2, 9),
-      timestamp: new Date().toISOString()
-    };
-    setPurchases(prev => [newPurchase, ...prev]);
-  }, []);
-
-  const deletePurchase = useCallback((id: string) => {
-    setPurchases(prev => prev.filter(p => p.id !== id));
-  }, []);
-
-  const addCategory = (name: string) => {
-    if (!categories.includes(name)) {
-      setCategories(prev => [...prev, name]);
-    }
-  };
-
-  const removeCategory = (name: string) => {
-    setCategories(prev => prev.filter(c => c !== name));
-  };
-
-  const addExpenseCategory = (name: string) => {
-    if (!expenseCategories.includes(name)) {
-      setExpenseCategories(prev => [...prev, name]);
-    }
-  };
-
-  const removeExpenseCategory = (name: string) => {
-    setExpenseCategories(prev => prev.filter(c => c !== name));
-  };
-
-  const deleteStore = (id: string) => {
-    if (stores.length <= 1) {
-      alert("Critical Error: System requires at least one operations hub.");
-      return;
-    }
-    
-    setStores(prev => {
-      const updated = prev.filter(s => s.id !== id);
-      if (currentStore.id === id) {
-        setCurrentStore(updated[0]);
+    const fetchInitialMetadata = async () => {
+      let storeQuery = supabase.from('stores').select('*');
+      if (currentUser.role !== UserRole.SUPER_ADMIN) {
+        if (!currentUser.assignedStoreId) {
+          setStores([]);
+          return;
+        }
+        storeQuery = storeQuery.eq('id', currentUser.assignedStoreId);
       }
-      return updated;
-    });
+      
+      const { data: storesData } = await storeQuery;
+      if (storesData && storesData.length > 0) {
+        setStores(storesData);
+        if (!currentStore || !storesData.find(s => s.id === currentStore.id)) {
+          setCurrentStore(storesData[0]);
+        }
+      }
 
-    setProducts(prev => prev.filter(p => p.storeId !== id));
-    setSales(prev => prev.filter(s => s.storeId !== id));
-    setExpenses(prev => prev.filter(e => e.storeId !== id));
-  };
+      let userQuery = supabase.from('users').select('*');
+      if (currentUser.role !== UserRole.SUPER_ADMIN) {
+        userQuery = userQuery.eq('assignedStoreId', currentUser.assignedStoreId);
+      }
+      const { data: usersData } = await userQuery;
+      if (usersData) setUsers(usersData);
+    };
 
-  const checkPermission = (action: keyof UserPermissions) => {
-    if (currentUser.role === UserRole.SUPER_ADMIN) return true;
-    return currentUser.permissions?.[action] || false;
+    fetchInitialMetadata();
+  }, [isAuthenticated, currentUser?.id, currentUser?.assignedStoreId]);
+
+  // --- ৫. স্টোর স্পেসিফিক ডাটা ফেচিং ---
+  useEffect(() => {
+    if (!isAuthenticated || !currentUser || !currentStore?.id) return;
+
+    if (currentUser.role !== UserRole.SUPER_ADMIN && currentUser.assignedStoreId !== currentStore.id) {
+      console.warn("Unauthorized store access attempt blocked.");
+      resetAllData();
+      return; 
+    }
+
+    const fetchStoreData = async () => {
+      setIsDataLoading(true);
+      resetAllData(); 
+
+      const storeId = currentStore.id;
+
+      const [
+        { data: prodData }, { data: salesData }, { data: expData }, 
+        { data: custData }, { data: suppData }, { data: purData }
+      ] = await Promise.all([
+        supabase.from('products').select('*').eq('storeId', storeId),
+        supabase.from('sales').select('*').eq('storeId', storeId).order('timestamp', { ascending: false }),
+        supabase.from('expenses').select('*').eq('storeId', storeId).order('timestamp', { ascending: false }),
+        supabase.from('customers').select('*').eq('storeId', storeId),
+        supabase.from('suppliers').select('*').eq('storeId', storeId),
+        supabase.from('purchases').select('*').eq('storeId', storeId).order('timestamp', { ascending: false })
+      ]);
+
+      setProducts(prodData || []);
+      setSales(salesData || []);
+      setExpenses(expData || []);
+      setCustomers(custData || []);
+      setSuppliers(suppData || []);
+      setPurchases(purData || []);
+      setIsDataLoading(false);
+    };
+
+    fetchStoreData();
+  }, [currentStore?.id, currentUser?.id, isAuthenticated]);
+
+  // --- ৬. অথেন্টিকেশন হ্যান্ডলার ---
+  const handleLogout = () => {
+    setIsAuthenticated(false);
+    setCurrentUser(null);
+    setCurrentStore(null);
+    resetAllData();
+    localStorage.clear(); 
   };
 
   const handleLogin = (user: User) => {
     setCurrentUser(user);
     setIsAuthenticated(true);
+    localStorage.setItem('omni_auth', 'true');
+    localStorage.setItem('omni_user', JSON.stringify(user));
   };
 
-  const handleLogout = () => {
-    setIsAuthenticated(false);
-    // We don't necessarily need to clear currentUser, but we can reset it to a default if we want
+  // 🔴 ৭. ক্যাটাগরি কন্ট্রোলার ফাংশন 🔴
+  const handleAddCategory = useCallback((name: string) => {
+    setCategories(prev => {
+      if (prev.includes(name)) return prev;
+      const updated = [...prev, name];
+      localStorage.setItem('omni_categories', JSON.stringify(updated));
+      return updated;
+    });
+  }, []);
+
+  const handleRemoveCategory = useCallback((name: string) => {
+    setCategories(prev => {
+      const updated = prev.filter(c => c !== name);
+      localStorage.setItem('omni_categories', JSON.stringify(updated));
+      return updated;
+    });
+  }, []);
+
+  const handleAddExpenseCategory = useCallback((name: string) => {
+    setExpenseCategories(prev => {
+      if (prev.includes(name)) return prev;
+      const updated = [...prev, name];
+      localStorage.setItem('omni_expense_categories', JSON.stringify(updated));
+      return updated;
+    });
+  }, []);
+
+  const handleRemoveExpenseCategory = useCallback((name: string) => {
+    setExpenseCategories(prev => {
+      const updated = prev.filter(c => c !== name);
+      localStorage.setItem('omni_expense_categories', JSON.stringify(updated));
+      return updated;
+    });
+  }, []);
+
+  // --- ৮. CRUD ফাংশনসমূহ ---
+  const addProduct = useCallback(async (newProduct: Omit<Product, 'id' | 'lastUpdated'>) => {
+    const { data } = await supabase.from('products').insert([{ ...newProduct, storeId: currentStore?.id }]).select().single();
+    if (data) setProducts(prev => [...prev, data]);
+  }, [currentStore?.id]);
+
+  const updateProduct = useCallback(async (id: string, updates: Partial<Product>) => {
+    const { data } = await supabase.from('products').update(updates).eq('id', id).select().single();
+    if (data) setProducts(prev => prev.map(p => p.id === id ? data : p));
+  }, []);
+
+  const deleteProduct = useCallback(async (id: string) => {
+    await supabase.from('products').delete().eq('id', id);
+    setProducts(prev => prev.filter(p => p.id !== id));
+  }, []);
+
+  const addSale = useCallback(async (sale: Omit<Sale, 'id' | 'timestamp'>) => {
+    const { data } = await supabase.from('sales').insert([{ ...sale, storeId: currentStore?.id }]).select().single();
+    if (data) setSales(prev => [data, ...prev]);
+  }, [currentStore?.id]);
+
+  const updateSale = useCallback(async (id: string, updates: Partial<Sale>) => {
+    const { data } = await supabase.from('sales').update(updates).eq('id', id).select().single();
+    if (data) setSales(prev => prev.map(s => s.id === id ? data : s));
+  }, []);
+
+  const deleteSale = useCallback(async (id: string) => {
+    await supabase.from('sales').delete().eq('id', id);
+    setSales(prev => prev.filter(s => s.id !== id));
+  }, []);
+
+  const addExpense = useCallback(async (expense: Omit<Expense, 'id' | 'timestamp'>) => {
+    const { data } = await supabase.from('expenses').insert([{ ...expense, storeId: currentStore?.id }]).select().single();
+    if (data) setExpenses(prev => [data, ...prev]);
+  }, [currentStore?.id]);
+
+  const updateExpense = useCallback(async (id: string, updates: Partial<Expense>) => {
+    const { data } = await supabase.from('expenses').update(updates).eq('id', id).select().single();
+    if (data) setExpenses(prev => prev.map(e => e.id === id ? data : e));
+  }, []);
+
+  const deleteExpense = useCallback(async (id: string) => {
+    await supabase.from('expenses').delete().eq('id', id);
+    setExpenses(prev => prev.filter(e => e.id !== id));
+  }, []);
+
+  const addCustomer = useCallback(async (customer: Omit<Customer, 'id'>) => {
+    const { data } = await supabase.from('customers').insert([{ ...customer, storeId: currentStore?.id }]).select().single();
+    if (data) setCustomers(prev => [...prev, data]);
+  }, [currentStore?.id]);
+
+  const updateCustomer = useCallback(async (id: string, updates: Partial<Customer>) => {
+    const { data } = await supabase.from('customers').update(updates).eq('id', id).select().single();
+    if (data) setCustomers(prev => prev.map(c => c.id === id ? data : c));
+  }, []);
+
+  const deleteCustomer = useCallback(async (id: string) => {
+    await supabase.from('customers').delete().eq('id', id);
+    setCustomers(prev => prev.filter(c => c.id !== id));
+  }, []);
+
+  const updateCustomerDue = useCallback(async (id: string, amount: number) => {
+    const customer = customers.find(c => c.id === id);
+    if (customer) {
+      const { data } = await supabase.from('customers').update({ totalDue: customer.totalDue + amount }).eq('id', id).select().single();
+      if (data) setCustomers(prev => prev.map(c => c.id === id ? data : c));
+    }
+  }, [customers]);
+
+  const addSupplier = useCallback(async (supplier: Omit<Supplier, 'id'>) => {
+    const { data } = await supabase.from('suppliers').insert([{ ...supplier, storeId: currentStore?.id }]).select().single();
+    if (data) setSuppliers(prev => [...prev, data]);
+  }, [currentStore?.id]);
+
+  const updateSupplier = useCallback(async (id: string, updates: Partial<Supplier>) => {
+    const { data } = await supabase.from('suppliers').update(updates).eq('id', id).select().single();
+    if (data) setSuppliers(prev => prev.map(s => s.id === id ? data : s));
+  }, []);
+
+  const deleteSupplier = useCallback(async (id: string) => {
+    await supabase.from('suppliers').delete().eq('id', id);
+    setSuppliers(prev => prev.filter(s => s.id !== id));
+  }, []);
+
+  const updateSupplierDue = useCallback(async (id: string, amount: number) => {
+    const supplier = suppliers.find(s => s.id === id);
+    if (supplier) {
+      const { data } = await supabase.from('suppliers').update({ totalDue: supplier.totalDue + amount }).eq('id', id).select().single();
+      if (data) setSuppliers(prev => prev.map(s => s.id === id ? data : s));
+    }
+  }, [suppliers]);
+
+  const addPurchase = useCallback(async (purchase: Omit<Purchase, 'id' | 'timestamp'>) => {
+    const { data } = await supabase.from('purchases').insert([{ ...purchase, storeId: currentStore?.id }]).select().single();
+    if (data) setPurchases(prev => [data, ...prev]);
+  }, [currentStore?.id]);
+
+  const deletePurchase = useCallback(async (id: string) => {
+    await supabase.from('purchases').delete().eq('id', id);
+    setPurchases(prev => prev.filter(p => p.id !== id));
+  }, []);
+
+  const deleteStore = async (id: string) => {
+    if (stores.length <= 1) return alert("System requires at least one hub.");
+    await supabase.from('stores').delete().eq('id', id);
+    const updated = stores.filter(s => s.id !== id);
+    setStores(updated);
+    if (currentStore?.id === id) setCurrentStore(updated[0]);
   };
 
-  if (!isAuthenticated) {
-    return <Login users={users} onLogin={handleLogin} />;
+  const checkPermission = (action: keyof UserPermissions) => {
+    if (currentUser?.role === UserRole.SUPER_ADMIN) return true;
+    return currentUser?.permissions?.[action] || false;
+  };
+
+  // --- ৯. রেন্ডারিং লজিক ---
+  if (!isAuthenticated || !currentUser) {
+    return <Login onLogin={handleLogin} />;
+  }
+
+  if (!currentStore || isDataLoading) {
+    return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-amber-400 font-black tracking-widest uppercase animate-pulse">Isolating Hub Data...</div>;
   }
 
   return (
     <HashRouter>
       <Layout 
-        currentUser={currentUser} 
-        currentStore={currentStore} 
-        stores={stores} 
-        onStoreChange={setCurrentStore}
-        users={users}
-        onUserChange={setCurrentUser}
-        products={products}
-        onLogout={handleLogout}
+        currentUser={currentUser} currentStore={currentStore} stores={stores} 
+        onStoreChange={setCurrentStore} users={users} onUserChange={setCurrentUser}
+        products={products} onLogout={handleLogout}
       >
         <Routes>
-          <Route path="/" element={
-            currentUser.role !== UserRole.SALESMAN
-              ? <Dashboard products={products} currentStore={currentStore} sales={sales} expenses={expenses} />
-              : <Navigate to="/inventory" replace />
-          } />
-          <Route 
-            path="/inventory" 
-            element={
-              <Inventory 
-                products={products} 
-                suppliers={suppliers}
-                currentStore={currentStore} 
-                currentUser={currentUser}
-                categories={categories}
-                sales={sales}
-                expenses={expenses}
-                onUpdate={updateProduct}
-                onDelete={deleteProduct}
-                onAdd={addProduct}
-                onAddSale={addSale}
-                onAddExpense={addExpense}
-                onUpdateExpense={updateExpense}
-                onDeleteExpense={deleteExpense}
-                onAddCategory={addCategory}
-                onRemoveCategory={removeCategory}
-                onUpdateSupplierDue={updateSupplierDue}
-                onAddPurchase={addPurchase}
-                canEditPrices={checkPermission('inventory_edit')}
-                canDelete={checkPermission('inventory_delete')}
-              />
-            } 
-          />
-          <Route 
-            path="/sales" 
-            element={
-              <Sales 
-                sales={sales} 
-                products={products} 
-                customers={customers}
-                expenses={expenses}
-                currentStore={currentStore} 
-                currentUser={currentUser}
-                onAddSale={addSale}
-                onUpdateSale={updateSale}
-                onUpdateStock={updateProduct}
-                onUpdateCustomerDue={updateCustomerDue}
-                onDeleteSale={deleteSale}
-                canDelete={checkPermission('sales_delete')}
-              />
-            } 
-          />
-          <Route 
-            path="/customers" 
-            element={
-              <Customers 
-                customers={customers}
-                currentStore={currentStore}
-                onAddCustomer={addCustomer}
-                onUpdateCustomer={updateCustomer}
-                onDeleteCustomer={deleteCustomer}
-                onAddSale={addSale}
-                onUpdateCustomerDue={updateCustomerDue}
-                canEdit={checkPermission('customers_edit')}
-                canDelete={checkPermission('customers_delete')}
-              />
-            } 
-          />
-          <Route 
-            path="/suppliers" 
-            element={
-              <Suppliers 
-                suppliers={suppliers}
-                currentStore={currentStore}
-                onAddSupplier={addSupplier}
-                onUpdateSupplier={updateSupplier}
-                onDeleteSupplier={deleteSupplier}
-                onAddExpense={addExpense}
-                onUpdateSupplierDue={updateSupplierDue}
-                canEdit={checkPermission('suppliers_edit')}
-                canDelete={checkPermission('suppliers_delete')}
-              />
-            } 
-          />
-          <Route 
-            path="/purchases" 
-            element={
-              <Purchases 
-                purchases={purchases}
-                suppliers={suppliers}
-                products={products}
-                currentStore={currentStore}
-                onAddPurchase={addPurchase}
-                onUpdateStock={updateProduct}
-                onUpdateSupplierDue={updateSupplierDue}
-                onDeletePurchase={deletePurchase}
-                canDelete={checkPermission('purchase_delete')}
-              />
-            } 
-          />
-          <Route 
-            path="/expenses" 
-            element={
-              currentUser.role !== UserRole.SALESMAN
-                ? <Expenses 
-                    expenses={expenses} 
-                    currentStore={currentStore} 
-                    currentUser={currentUser}
-                    expenseCategories={expenseCategories}
-                    onAddExpense={addExpense}
-                    onUpdateExpense={updateExpense}
-                    onDeleteExpense={deleteExpense}
-                    onAddExpenseCategory={addExpenseCategory}
-                    onRemoveExpenseCategory={removeExpenseCategory}
-                    canEdit={checkPermission('expenses_edit')}
-                    canDelete={checkPermission('expenses_delete')}
-                  />
-                : <Navigate to="/inventory" replace />
-            } 
-          />
-          <Route 
-            path="/wastage" 
-            element={
-              currentUser.role !== UserRole.SALESMAN
-                ? <Wastage 
-                    products={products}
-                    currentStore={currentStore}
-                    expenses={expenses}
-                    onUpdateStock={updateProduct}
-                    onAddExpense={addExpense}
-                  />
-                : <Navigate to="/inventory" replace />
-            } 
-          />
-          <Route 
-            path="/users" 
-            element={
-              checkPermission('user_control_access')
-                ? <Users users={users} stores={stores} setUsers={setUsers} />
-                : <Navigate to="/" replace />
-            } 
-          />
-          <Route 
-            path="/scanner" 
-            element={
-              <Scanner 
-                products={products} 
-                currentStore={currentStore}
-                onUpdate={updateProduct}
-                onAddSale={addSale}
-              />
-            } 
-          />
-          <Route 
-            path="/settings" 
-            element={
-              <Settings 
-                stores={stores} 
-                currentUser={currentUser} 
-                users={users}
-                currentStore={currentStore}
-                setStores={setStores} 
-                setUsers={setUsers}
-                setCurrentUser={setCurrentUser}
-                setCurrentStore={setCurrentStore}
-                onDeleteStore={deleteStore}
-                canEditStores={checkPermission('settings_access')}
-              />
-            } 
-          />
+          <Route path="/" element={currentUser.role !== UserRole.SALESMAN ? <Dashboard products={products} currentStore={currentStore} sales={sales} expenses={expenses} /> : <Navigate to="/inventory" replace />} />
+          
+          {/* 🔴 এখানে Inventory-তে আসল ক্যাটাগরি ফাংশনগুলো পাস করা হলো 🔴 */}
+          <Route path="/inventory" element={<Inventory products={products} suppliers={suppliers} currentStore={currentStore} currentUser={currentUser} categories={categories} sales={sales} expenses={expenses} onUpdate={updateProduct} onDelete={deleteProduct} onAdd={addProduct} onAddSale={addSale} onAddExpense={addExpense} onUpdateExpense={updateExpense} onDeleteExpense={deleteExpense} onAddCategory={handleAddCategory} onRemoveCategory={handleRemoveCategory} onUpdateSupplierDue={updateSupplierDue} onAddPurchase={addPurchase} canEditPrices={checkPermission('inventory_edit')} canDelete={checkPermission('inventory_delete')} />} />
+          
+          <Route path="/sales" element={<Sales sales={sales} products={products} customers={customers} expenses={expenses} currentStore={currentStore} currentUser={currentUser} onAddSale={addSale} onUpdateSale={updateSale} onUpdateStock={updateProduct} onUpdateCustomerDue={updateCustomerDue} onDeleteSale={deleteSale} canDelete={checkPermission('sales_delete')} />} />
+          <Route path="/customers" element={<Customers customers={customers} currentStore={currentStore} onAddCustomer={addCustomer} onUpdateCustomer={updateCustomer} onDeleteCustomer={deleteCustomer} onAddSale={addSale} onUpdateCustomerDue={updateCustomerDue} canEdit={checkPermission('customers_edit')} canDelete={checkPermission('customers_delete')} />} />
+          <Route path="/suppliers" element={<Suppliers suppliers={suppliers} currentStore={currentStore} onAddSupplier={addSupplier} onUpdateSupplier={updateSupplier} onDeleteSupplier={deleteSupplier} onAddExpense={addExpense} onUpdateSupplierDue={updateSupplierDue} canEdit={checkPermission('suppliers_edit')} canDelete={checkPermission('suppliers_delete')} />} />
+          <Route path="/purchases" element={<Purchases purchases={purchases} suppliers={suppliers} products={products} currentStore={currentStore} onAddPurchase={addPurchase} onUpdateStock={updateProduct} onUpdateSupplierDue={updateSupplierDue} onDeletePurchase={deletePurchase} canDelete={checkPermission('purchase_delete')} />} />
+          
+          {/* 🔴 এখানে Expenses-এ আসল ক্যাটাগরি ফাংশনগুলো পাস করা হলো 🔴 */}
+          <Route path="/expenses" element={currentUser.role !== UserRole.SALESMAN ? <Expenses expenses={expenses} currentStore={currentStore} currentUser={currentUser} expenseCategories={expenseCategories} onAddExpense={addExpense} onUpdateExpense={updateExpense} onDeleteExpense={deleteExpense} onAddExpenseCategory={handleAddExpenseCategory} onRemoveExpenseCategory={handleRemoveExpenseCategory} canEdit={checkPermission('expenses_edit')} canDelete={checkPermission('expenses_delete')} /> : <Navigate to="/inventory" replace />} />
+          
+          <Route path="/wastage" element={currentUser.role !== UserRole.SALESMAN ? <Wastage products={products} currentStore={currentStore} expenses={expenses} onUpdateStock={updateProduct} onAddExpense={addExpense} /> : <Navigate to="/inventory" replace />} />
+          <Route path="/users" element={checkPermission('user_control_access') ? <Users users={users} stores={stores} setUsers={setUsers} /> : <Navigate to="/" replace />} />
+          <Route path="/settings" element={<Settings stores={stores} currentUser={currentUser} users={users} currentStore={currentStore} setStores={setStores} setUsers={setUsers} setCurrentUser={setCurrentUser} setCurrentStore={setCurrentStore} onDeleteStore={deleteStore} canEditStores={checkPermission('settings_access')} />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Layout>

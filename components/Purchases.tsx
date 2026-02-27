@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo } from 'react';
 import { Purchase, Supplier, Product, Store, User } from '../types';
 import { 
@@ -13,7 +12,8 @@ import {
   Hash,
   ArrowRight,
   Package,
-  Check
+  Check,
+  X 
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -22,10 +22,10 @@ interface PurchasesProps {
   suppliers: Supplier[];
   products: Product[];
   currentStore: Store;
-  onAddPurchase: (purchase: Omit<Purchase, 'id' | 'timestamp'>) => void;
-  onUpdateStock: (id: string, updates: Partial<Product>) => void;
-  onUpdateSupplierDue: (id: string, amount: number) => void;
-  onDeletePurchase: (id: string) => void;
+  onAddPurchase: (purchase: Omit<Purchase, 'id' | 'timestamp'>) => void | Promise<void>;
+  onUpdateStock: (id: string, updates: Partial<Product>) => void | Promise<void>;
+  onUpdateSupplierDue: (id: string, amount: number) => void | Promise<void>;
+  onDeletePurchase: (id: string) => void | Promise<void>;
   canDelete: boolean;
 }
 
@@ -42,6 +42,7 @@ const Purchases: React.FC<PurchasesProps> = ({
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
 
   // Form State
   const [poNumber, setPoNumber] = useState('');
@@ -61,50 +62,68 @@ const Purchases: React.FC<PurchasesProps> = ({
       );
   }, [purchases, currentStore.id, searchTerm]);
 
-  const totalInvestment = useMemo(() => {
-    return filteredPurchases.reduce((acc, curr) => acc + curr.totalCost, 0);
+  // 🔴 স্পেশাল ক্যালকুলেশন লজিক 🔴
+  const actualPurchases = useMemo(() => {
+    // পেমেন্ট রিসিভ এন্ট্রিগুলো বাদ দিয়ে শুধু আসল কেনাকাটার হিসাব
+    return filteredPurchases.filter(p => !p.poNumber?.startsWith('PAY-') && p.productId !== 'SUPPLIER_PAYMENT' && p.productId !== 'PAYMENT_RECEIVED');
   }, [filteredPurchases]);
+
+  const totalInvestment = useMemo(() => {
+    return actualPurchases.reduce((acc, curr) => acc + curr.totalCost, 0);
+  }, [actualPurchases]);
 
   const totalDue = useMemo(() => {
-    return filteredPurchases.reduce((acc, curr) => acc + curr.amountDue, 0);
-  }, [filteredPurchases]);
+    // ১০০% নিখুঁত হিসাবের জন্য সরাসরি suppliers টেবিল থেকে মোট বকেয়া বের করা হচ্ছে
+    return suppliers
+      .filter(s => s.storeId === currentStore.id)
+      .reduce((acc, curr) => acc + curr.totalDue, 0);
+  }, [suppliers, currentStore.id]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const supplier = suppliers.find(s => s.id === supplierId);
     const product = products.find(p => p.id === productId);
     
     if (!supplier || !product) return;
 
-    const totalCost = quantity * unitCost;
-    const amountDue = totalCost - amountPaid;
+    setIsLoading(true);
+    try {
+      const totalCost = quantity * unitCost;
+      const amountDue = totalCost - amountPaid;
 
-    onAddPurchase({
-      poNumber,
-      supplierId,
-      supplierName: supplier.name,
-      productId,
-      productName: product.name,
-      quantity,
-      unitCost,
-      totalCost,
-      amountPaid,
-      amountDue,
-      storeId: currentStore.id
-    });
+      // Async DB Update: New Purchase
+      await onAddPurchase({
+        poNumber,
+        supplierId,
+        supplierName: supplier.name,
+        productId,
+        productName: product.name,
+        quantity,
+        unitCost,
+        totalCost,
+        amountPaid,
+        amountDue,
+        storeId: currentStore.id
+      });
 
-    // Update product stock and buying price
-    onUpdateStock(productId, { 
-      quantity: product.quantity + quantity,
-      buyingPrice: unitCost // Update to latest cost
-    });
+      // Update product stock and buying price in DB
+      await onUpdateStock(productId, { 
+        quantity: product.quantity + quantity,
+        buyingPrice: unitCost 
+      });
 
-    // Update supplier due
-    if (amountDue > 0) {
-      onUpdateSupplierDue(supplierId, amountDue);
+      // Update supplier due in DB
+      if (amountDue > 0) {
+        await onUpdateSupplierDue(supplierId, amountDue);
+      }
+
+      alert('Procurement Success: Stock updated and PO recorded.');
+      resetForm();
+    } catch (error: any) {
+      alert(`Purchase failed: ${error.message}`);
+    } finally {
+      setIsLoading(false);
     }
-
-    resetForm();
   };
 
   const resetForm = () => {
@@ -119,17 +138,20 @@ const Purchases: React.FC<PurchasesProps> = ({
 
   const exportToCSV = () => {
     const headers = ['PO Number', 'Supplier', 'Product', 'Qty', 'Unit Cost', 'Total Cost', 'Paid', 'Due', 'Date'];
-    const data = filteredPurchases.map(p => [
-      p.poNumber,
-      p.supplierName,
-      p.productName,
-      p.quantity,
-      p.unitCost.toFixed(2),
-      p.totalCost.toFixed(2),
-      p.amountPaid.toFixed(2),
-      p.amountDue.toFixed(2),
-      new Date(p.timestamp).toLocaleDateString()
-    ]);
+    const data = filteredPurchases.map(p => {
+      const isPayment = p.poNumber?.startsWith('PAY-') || p.productId === 'SUPPLIER_PAYMENT' || p.productId === 'PAYMENT_RECEIVED';
+      return [
+        p.poNumber,
+        p.supplierName,
+        isPayment ? 'SUPPLIER PAYMENT' : p.productName,
+        isPayment ? '-' : p.quantity,
+        isPayment ? '-' : p.unitCost.toFixed(2),
+        isPayment ? '-' : p.totalCost.toFixed(2),
+        (p.amountPaid || 0).toFixed(2),
+        (p.amountDue || 0).toFixed(2),
+        new Date(p.timestamp).toLocaleDateString()
+      ];
+    });
     
     const csvContent = [headers, ...data].map(e => e.join(",")).join("\n");
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -171,31 +193,31 @@ const Purchases: React.FC<PurchasesProps> = ({
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 flex items-center gap-6">
-          <div className="w-14 h-14 bg-amber-400/10 rounded-2xl flex items-center justify-center text-amber-400">
+        <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 flex items-center gap-6 group hover:border-amber-400/30 transition-all">
+          <div className="w-14 h-14 bg-amber-400/10 rounded-2xl flex items-center justify-center text-amber-400 group-hover:scale-110 transition-transform">
             <ShoppingBag className="w-7 h-7" />
           </div>
           <div>
             <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Total Purchases</p>
-            <h3 className="text-2xl font-black text-white">{filteredPurchases.length}</h3>
+            <h3 className="text-2xl font-black text-white">{actualPurchases.length}</h3>
           </div>
         </div>
-        <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 flex items-center gap-6">
-          <div className="w-14 h-14 bg-emerald-400/10 rounded-2xl flex items-center justify-center text-emerald-400">
+        <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 flex items-center gap-6 group hover:border-emerald-400/30 transition-all">
+          <div className="w-14 h-14 bg-emerald-400/10 rounded-2xl flex items-center justify-center text-emerald-400 group-hover:scale-110 transition-transform">
             <DollarSign className="w-7 h-7" />
           </div>
           <div>
             <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Total Investment</p>
-            <h3 className="text-2xl font-black text-emerald-400">${totalInvestment.toFixed(2)}</h3>
+            <h3 className="text-2xl font-black text-emerald-400">${totalInvestment.toLocaleString()}</h3>
           </div>
         </div>
-        <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 flex items-center gap-6">
-          <div className="w-14 h-14 bg-rose-400/10 rounded-2xl flex items-center justify-center text-rose-400">
+        <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 flex items-center gap-6 group hover:border-rose-400/30 transition-all">
+          <div className="w-14 h-14 bg-rose-400/10 rounded-2xl flex items-center justify-center text-rose-400 group-hover:scale-110 transition-transform">
             <DollarSign className="w-7 h-7" />
           </div>
           <div>
             <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Total Dues</p>
-            <h3 className="text-2xl font-black text-rose-400">${totalDue.toFixed(2)}</h3>
+            <h3 className="text-2xl font-black text-rose-400">${totalDue.toLocaleString()}</h3>
           </div>
         </div>
       </div>
@@ -226,32 +248,53 @@ const Purchases: React.FC<PurchasesProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/50">
-              {filteredPurchases.map((purchase) => (
-                <tr key={purchase.id} className="group hover:bg-slate-800/40 transition-all">
-                  <td className="px-6 py-5">
-                    <p className="font-black text-white text-xs tracking-tighter">{purchase.poNumber}</p>
-                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-tighter">{new Date(purchase.timestamp).toLocaleDateString()}</p>
-                  </td>
-                  <td className="px-6 py-5 text-sm font-bold text-slate-300">{purchase.supplierName}</td>
-                  <td className="px-6 py-5 text-sm text-slate-400">{purchase.productName}</td>
-                  <td className="px-6 py-5 text-center font-black text-white text-sm">{purchase.quantity}</td>
-                  <td className="px-6 py-5 text-right font-black text-white text-sm">${purchase.totalCost.toFixed(2)}</td>
-                  <td className="px-6 py-5 text-right">
-                    <p className="text-emerald-400 text-xs font-black">${purchase.amountPaid.toFixed(2)} Paid</p>
-                    {purchase.amountDue > 0 && <p className="text-rose-400 text-[10px] font-black uppercase tracking-tighter">${purchase.amountDue.toFixed(2)} Due</p>}
-                  </td>
-                  <td className="px-6 py-5 text-right">
-                    {canDelete && (
-                      <button 
-                        onClick={() => onDeletePurchase(purchase.id)}
-                        className="p-2 text-slate-600 hover:text-rose-500 transition-colors"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
+              {filteredPurchases.map((purchase) => {
+                // 🔴 পেমেন্ট রিসিভ এন্ট্রি চেনার লজিক 🔴
+                const isPayment = purchase.poNumber?.startsWith('PAY-') || purchase.productId === 'SUPPLIER_PAYMENT' || purchase.productId === 'PAYMENT_RECEIVED';
+
+                return (
+                  <tr key={purchase.id} className="group hover:bg-slate-800/40 transition-all">
+                    <td className="px-6 py-5">
+                      <p className="font-black text-white text-xs tracking-tighter">{purchase.poNumber}</p>
+                      <p className="text-[10px] text-slate-500 font-bold uppercase tracking-tighter">{new Date(purchase.timestamp).toLocaleDateString()}</p>
+                    </td>
+                    <td className="px-6 py-5 text-sm font-bold text-slate-300">{purchase.supplierName}</td>
+                    <td className="px-6 py-5 text-sm text-slate-400">
+                      {isPayment ? (
+                        <span className="text-blue-400 italic font-bold">Supplier Payment</span>
+                      ) : (
+                        purchase.productName
+                      )}
+                    </td>
+                    <td className="px-6 py-5 text-center font-black text-white text-sm">
+                      {isPayment ? '-' : purchase.quantity}
+                    </td>
+                    <td className="px-6 py-5 text-right font-black text-white text-sm">
+                      {isPayment ? '-' : `$${purchase.totalCost.toLocaleString()}`}
+                    </td>
+                    <td className="px-6 py-5 text-right">
+                      {isPayment ? (
+                        <span className="text-blue-400 bg-blue-500/10 px-3 py-1.5 rounded-xl text-[10px] uppercase tracking-widest">+ ${purchase.amountPaid?.toLocaleString()} Paid</span>
+                      ) : (
+                        <>
+                          <p className="text-emerald-400 text-xs font-black">${purchase.amountPaid.toLocaleString()} Paid</p>
+                          {purchase.amountDue > 0 && <p className="text-rose-400 text-[10px] font-black uppercase tracking-tighter">${purchase.amountDue.toLocaleString()} Due</p>}
+                        </>
+                      )}
+                    </td>
+                    <td className="px-6 py-5 text-right">
+                      {canDelete && (
+                        <button 
+                          onClick={() => onDeletePurchase(purchase.id)}
+                          className="p-2 text-slate-600 hover:text-rose-500 transition-colors"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
               {filteredPurchases.length === 0 && (
                 <tr>
                   <td colSpan={7} className="px-6 py-20 text-center opacity-30 grayscale">
@@ -284,7 +327,7 @@ const Purchases: React.FC<PurchasesProps> = ({
               <div className="flex items-center justify-between mb-8">
                 <h2 className="text-2xl font-black text-white tracking-tight uppercase">New Purchase Order</h2>
                 <button onClick={resetForm} className="p-2 text-slate-500 hover:text-white transition-colors">
-                  <Trash2 className="w-6 h-6 rotate-45" />
+                  <X className="w-6 h-6" />
                 </button>
               </div>
 
@@ -389,9 +432,10 @@ const Purchases: React.FC<PurchasesProps> = ({
 
                 <button 
                   type="submit"
-                  className="w-full py-5 bg-gradient-to-r from-amber-400 to-amber-600 text-slate-950 rounded-[2rem] font-black shadow-2xl hover:scale-[1.02] transition-all uppercase tracking-widest text-xs flex items-center justify-center gap-3"
+                  disabled={isLoading}
+                  className="w-full py-5 bg-gradient-to-r from-amber-400 to-amber-600 text-slate-950 rounded-[2rem] font-black shadow-2xl hover:scale-[1.02] transition-all uppercase tracking-widest text-xs flex items-center justify-center gap-3 disabled:opacity-50"
                 >
-                  Confirm Purchase <ArrowRight className="w-5 h-5" />
+                  {isLoading ? 'Processing...' : <>Confirm Purchase <ArrowRight className="w-5 h-5" /></>}
                 </button>
               </form>
             </motion.div>
