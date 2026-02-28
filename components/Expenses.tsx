@@ -58,7 +58,7 @@ const Expenses: React.FC<ExpensesProps> = ({
 
   const filteredExpenses = useMemo(() => {
     return expenses
-      .filter(e => e.storeId === currentStore.id)
+      .filter(e => e.storeId === currentStore.id && e.category !== 'Wastage') // 🔴 Wastage ফিল্টার করা হয়েছে 🔴
       .filter(e => {
         const matchesSearch = e.description.toLowerCase().includes(searchTerm.toLowerCase());
         const matchesCategory = selectedCategory === 'All' || e.category === selectedCategory;
@@ -85,11 +85,9 @@ const Expenses: React.FC<ExpensesProps> = ({
       };
 
       if (editingExpense) {
-        // ডাটাবেসে আপডেট হওয়ার জন্য অপেক্ষা করবে
         await onUpdateExpense(editingExpense.id, data);
         alert('Update Success: Financial record modified.');
       } else {
-        // ডাটাবেসে নতুন ডাটা সেভ হওয়ার জন্য অপেক্ষা করবে
         await onAddExpense(data);
         alert('Settlement Logged: Expense successfully recorded.');
       }
@@ -148,7 +146,6 @@ const Expenses: React.FC<ExpensesProps> = ({
 
   return (
     <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-700">
-      {/* Header Section */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
         <div>
           <h1 className="text-3xl font-black text-white tracking-tight flex items-center gap-3">
@@ -183,7 +180,6 @@ const Expenses: React.FC<ExpensesProps> = ({
         </div>
       </div>
 
-      {/* Overview Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="bg-slate-900/50 backdrop-blur-md p-8 rounded-[2.5rem] border border-slate-800 shadow-2xl flex flex-col justify-between">
            <div className="flex justify-between items-start mb-4">
@@ -205,12 +201,11 @@ const Expenses: React.FC<ExpensesProps> = ({
               <h3 className="font-black text-white text-lg tracking-tight">System Memo</h3>
            </div>
            <p className="text-slate-400 text-sm leading-relaxed max-w-2xl">
-            This ledger tracks all non-inventory capital outflows including facility rent, personnel compensation, and utility logistics. Precise logging is critical for net profit calculation in the Analytics dashboard.
+            This ledger tracks all non-inventory capital outflows including facility rent, personnel compensation, and utility logistics. Note: Stock wastage is tracked separately in the Wastage module to ensure accurate cash balance calculations.
            </p>
         </div>
       </div>
 
-      {/* Main Content Area */}
       <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 shadow-2xl">
         <div className="flex flex-col lg:flex-row gap-4 mb-8">
           <div className="flex-1 relative group">
@@ -316,7 +311,6 @@ const Expenses: React.FC<ExpensesProps> = ({
         </div>
       </div>
 
-      {/* Category Management Modal */}
       {isCategoryModalOpen && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
            <div className="bg-slate-900 w-full max-w-lg rounded-[2.5rem] border border-slate-800 shadow-2xl p-8 relative animate-in zoom-in-95 duration-300">
@@ -355,7 +349,6 @@ const Expenses: React.FC<ExpensesProps> = ({
         </div>
       )}
 
-      {/* Expense Logging Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
           <div className="bg-slate-900 w-full max-w-lg rounded-[2.5rem] border border-slate-800 shadow-2xl p-8 relative animate-in zoom-in-95 duration-300">
@@ -412,13 +405,6 @@ const Expenses: React.FC<ExpensesProps> = ({
                     placeholder="Provide specific details for this expenditure..." 
                     className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-rose-500 amber-glow h-32 resize-none" 
                   />
-                </div>
-
-                <div className="bg-rose-500/5 p-4 rounded-2xl border border-rose-500/10 flex gap-3">
-                  <TrendingDown className="w-5 h-5 text-rose-500 shrink-0" />
-                  <p className="text-[10px] text-slate-400 font-medium leading-relaxed">
-                    Logging this expense will immediately deduct the specified amount from the site's net profit reports. This action is recorded in the global financial directory.
-                  </p>
                 </div>
 
                 <button 

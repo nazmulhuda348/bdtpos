@@ -75,7 +75,6 @@ const Inventory: React.FC<InventoryProps> = ({
   const [barcodeProduct, setBarcodeProduct] = useState<Product | null>(null);
   const [newCatName, setNewCatName] = useState('');
 
-  // Scanner/Form states
   const [isScanning, setIsScanning] = useState(false);
   const [scannedSku, setScannedSku] = useState('');
   const [matchedProduct, setMatchedProduct] = useState<Product | null>(null);
@@ -251,9 +250,7 @@ const Inventory: React.FC<InventoryProps> = ({
       }
     }
 
-    // --- সাপ্লায়ার থাকলে Purchases এ যোগ হবে, না থাকলে Expenses এ Operation Cost হিসেবে যোগ হবে ---
     if (supplier) {
-      // Log expense if paid amount > 0
       if (paidAmount > 0) {
         onAddExpense({
           storeId: currentStore.id,
@@ -263,12 +260,10 @@ const Inventory: React.FC<InventoryProps> = ({
         });
       }
 
-      // Update supplier due if due amount > 0
       if (dueAmount > 0) {
         onUpdateSupplierDue(supplier.id, dueAmount);
       }
 
-      // Add purchase record
       onAddPurchase({
         poNumber: `${matchedProduct ? 'INV' : 'REG'}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`,
         supplierId: supplier.id,
@@ -283,8 +278,7 @@ const Inventory: React.FC<InventoryProps> = ({
         storeId: currentStore.id
       });
     } else {
-      // --- নতুন লজিক: সাপ্লায়ার না থাকলে সরাসরি Operational Cost হিসেবে যোগ হবে ---
-      if (totalCost > 0 && !editingProduct) { // এডিটিং এর সময় পুনরায় খরচ যোগ না করার জন্য
+      if (totalCost > 0 && !editingProduct) {
         onAddExpense({
           storeId: currentStore.id,
           category: "Operational Cost",
@@ -292,7 +286,6 @@ const Inventory: React.FC<InventoryProps> = ({
           description: `Cash purchase for new stock: ${productName} (${quantity} units)`
         });
       } else if (matchedProduct && totalCost > 0) {
-        // যদি এক্সিস্টিং প্রোডাক্টের স্টক বাড়ে এবং সাপ্লায়ার না থাকে
         onAddExpense({
           storeId: currentStore.id,
           category: "Operational Cost",
@@ -308,7 +301,6 @@ const Inventory: React.FC<InventoryProps> = ({
     form.reset();
   };
 
-  // Shared Barcode Modal UI Component
   const BarcodeModal = () => {
     if (!barcodeProduct) return null;
     return (
@@ -486,6 +478,9 @@ const Inventory: React.FC<InventoryProps> = ({
              </div>
           </div>
         )}
+        
+        {/* 🔴 বারকোড মডাল রেন্ডার করা হলো 🔴 */}
+        <BarcodeModal />
       </div>
     );
   }
@@ -785,6 +780,9 @@ const Inventory: React.FC<InventoryProps> = ({
           animation: scan 1.5s ease-in-out infinite;
         }
       `}</style>
+
+      {/* 🔴 বারকোড মডাল রেন্ডার করা হলো 🔴 */}
+      <BarcodeModal />
     </div>
   );
 };

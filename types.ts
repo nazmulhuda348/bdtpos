@@ -1,4 +1,3 @@
-
 export enum UserRole {
   SUPER_ADMIN = 'SUPER_ADMIN',
   MANAGER = 'MANAGER',
@@ -23,9 +22,10 @@ export interface UserPermissions {
 export interface User {
   id: string;
   name: string;
+  phone?: string; 
   role: UserRole;
   avatar: string;
-  assignedStoreId?: string; // Optional for Super Admin
+  assignedStoreId?: string; 
   password?: string;
   permissions?: UserPermissions;
 }
@@ -34,6 +34,16 @@ export interface Store {
   id: string;
   name: string;
   location: string;
+  monthlyFee?: number; // 🔴 মাসিক ফির জন্য নতুন কলাম 🔴
+}
+
+// 🔴 পেমেন্ট হিস্ট্রি রাখার জন্য নতুন ইন্টারফেস 🔴
+export interface StorePayment {
+  id: string;
+  storeId: string;
+  monthYear: string; 
+  amountPaid: number;
+  paymentDate: string;
 }
 
 export interface Product {

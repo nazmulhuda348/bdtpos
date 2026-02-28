@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Product, Store, Sale, Expense } from '../types';
 import { 
   DollarSign, 
@@ -9,7 +9,8 @@ import {
   Zap,
   Wallet,
   LayoutDashboard,
-  Check // <-- এই আইকনটি মিসিং ছিল
+  Check,
+  Calendar
 } from 'lucide-react';
 
 interface DashboardProps {
@@ -21,30 +22,46 @@ interface DashboardProps {
 
 const Dashboard: React.FC<DashboardProps> = ({ products, currentStore, sales, expenses }) => {
 
+  // ডিফল্টভাবে বর্তমান মাস সিলেক্ট করা (Format: YYYY-MM)
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
+
+  // --- ইনভেন্টরি স্ট্যাটাস (Stock Equity = Quantity * Buying Price) ---
   const inventoryStats = useMemo(() => {
     const storeProducts = products.filter(p => p.storeId === currentStore.id);
     const totalItems = storeProducts.length;
-    // Stock Equity = Quantity * Buying Price
     const stockEquity = storeProducts.reduce((acc, p) => acc + (p.quantity * p.buyingPrice), 0);
     const lowStockCount = storeProducts.filter(p => p.quantity <= p.minThreshold).length;
 
     return { totalItems, stockEquity, lowStockCount, storeProducts };
   }, [products, currentStore.id]);
 
-  const todayStats = useMemo(() => {
-    const today = new Date().toISOString().split('T')[0];
-    const todaySales = sales.filter(s => s.storeId === currentStore.id && s.timestamp.startsWith(today));
-    const todayExpenses = expenses.filter(e => e.storeId === currentStore.id && e.timestamp.startsWith(today));
+  // --- স্পেশাল মান্থলি ক্যালকুলেশন লজিক (Wastage Filter সহ) ---
+  const monthStats = useMemo(() => {
+    // সিলেক্ট করা মাসের ভিত্তিতে ফিল্টার
+    const filteredSales = sales.filter(s => 
+      s.storeId === currentStore.id && (!selectedMonth || s.timestamp.startsWith(selectedMonth))
+    );
+    const filteredExpenses = expenses.filter(e => 
+      e.storeId === currentStore.id && (!selectedMonth || e.timestamp.startsWith(selectedMonth))
+    );
     
     let totalSales = 0;
-    let todayCash = 0;
+    let totalCashIn = 0;
     let totalProfit = 0;
+    let totalExpense = 0;
+    let wastageLoss = 0;
 
-    todaySales.forEach(s => {
+    // ১. Sales ক্যালকুলেশন
+    filteredSales.forEach(s => {
       const isPayment = s.invoiceId?.startsWith('PAY-') || s.productId === 'PAYMENT_RECEIVED' || s.productId === 'SUPPLIER_PAYMENT';
 
-      todayCash += (s.amountPaid || 0);
+      // নগদ টাকা সবসময় Cash In এ যোগ হবে (প্রোডাক্ট সেল হোক বা বকেয়া আদায়)
+      totalCashIn += (s.amountPaid || 0);
 
+      // বকেয়া আদায় না হলে সেটি আসল সেল এবং প্রফিটে যোগ হবে
       if (!isPayment) {
         totalSales += s.totalPrice;
         const product = products.find(p => p.id === s.productId);
@@ -54,11 +71,23 @@ const Dashboard: React.FC<DashboardProps> = ({ products, currentStore, sales, ex
       }
     });
     
-    const totalExpense = todayExpenses.reduce((acc, e) => acc + e.amount, 0);
-    const netBalance = todayCash - totalExpense;
+    // ২. Expenses ও Wastage ক্যালকুলেশন
+    filteredExpenses.forEach(e => {
+      if (e.category === 'Wastage') {
+        // Wastage হলে সেটি শুধু লস হিসেবে কাউন্ট হবে, Expense এ যাবে না
+        wastageLoss += e.amount;
+      } else {
+        // সাধারণ Expense
+        totalExpense += e.amount;
+      }
+    });
 
-    return { totalSales, todayCash, totalProfit, totalExpense, netBalance };
-  }, [sales, products, expenses, currentStore.id]);
+    // ৩. ফাইনাল ব্যালেন্স ও প্রফিট অ্যাডজাস্টমেন্ট
+    totalProfit -= wastageLoss; // প্রফিট থেকে Wastage এর কেনা দামটা মাইনাস
+    const netBalance = totalCashIn - totalExpense; // ক্যাশ ইন থেকে খরচ মাইনাস
+
+    return { totalSales, totalProfit, totalExpense, netBalance };
+  }, [sales, products, expenses, currentStore.id, selectedMonth]);
 
   const lowStockList = useMemo(() => {
     return inventoryStats.storeProducts.filter(p => p.quantity <= p.minThreshold);
@@ -66,70 +95,88 @@ const Dashboard: React.FC<DashboardProps> = ({ products, currentStore, sales, ex
 
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
-      {/* Header */}
+      
+      {/* Header & Month Filter */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
         <div>
           <h1 className="text-3xl font-black text-white tracking-tight flex items-center gap-3">
             Command Center
             <span className="bg-amber-400/10 text-amber-400 text-xs py-1 px-3 rounded-full border border-amber-400/20 uppercase tracking-widest font-bold">Overview</span>
           </h1>
-          <p className="text-slate-500 font-medium mt-1">Real-time metrics for <span className="gold-gradient-text font-black">{currentStore.name}</span></p>
+          <p className="text-slate-500 font-medium mt-1">Financial & inventory metrics for <span className="gold-gradient-text font-black">{currentStore.name}</span></p>
+        </div>
+        
+        {/* Month Picker */}
+        <div className="flex items-center gap-3 bg-slate-900 border border-slate-800 p-2 rounded-2xl shadow-xl">
+          <div className="p-2 bg-slate-800 rounded-xl text-slate-400">
+            <Calendar className="w-5 h-5" />
+          </div>
+          <input 
+            type="month" 
+            value={selectedMonth}
+            onChange={(e) => setSelectedMonth(e.target.value)}
+            className="bg-transparent text-white font-bold outline-none cursor-pointer pr-4"
+          />
+          {selectedMonth && (
+            <button 
+              onClick={() => setSelectedMonth('')} 
+              className="px-3 py-1 bg-rose-500/10 text-rose-500 text-[10px] font-black uppercase tracking-widest rounded-lg hover:bg-rose-500 hover:text-white transition-all mr-2"
+            >
+              Clear
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Today's Financial Overview Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-        <div className="bg-slate-900/50 backdrop-blur-md p-5 rounded-[2rem] border border-slate-800 shadow-xl flex items-center gap-4 group hover:border-slate-500/30 transition-all">
-          <div className="w-10 h-10 bg-slate-800 rounded-xl flex items-center justify-center text-slate-400 group-hover:scale-110 transition-transform">
-            <ShoppingCart className="w-5 h-5" />
+      {/* 4 Main Financial Overview Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        
+        {/* Total Sales */}
+        <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 shadow-xl flex items-center gap-5 group hover:border-slate-500/30 transition-all">
+          <div className="w-14 h-14 bg-slate-800 rounded-2xl flex items-center justify-center text-slate-400 group-hover:scale-110 transition-transform">
+            <ShoppingCart className="w-6 h-6" />
           </div>
           <div>
-            <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Today's Sales</p>
-            <h3 className="text-lg font-black text-white tracking-tighter">${todayStats.totalSales.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Total Sales</p>
+            <h3 className="text-2xl font-black text-white tracking-tighter">${monthStats.totalSales.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
           </div>
         </div>
 
-        <div className="bg-slate-900/50 backdrop-blur-md p-5 rounded-[2rem] border border-slate-800 shadow-xl flex items-center gap-4 group hover:border-amber-500/30 transition-all">
-          <div className="w-10 h-10 bg-amber-400/10 rounded-xl flex items-center justify-center text-amber-400 group-hover:scale-110 transition-transform">
-            <DollarSign className="w-5 h-5" />
+        {/* Total Expense */}
+        <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 shadow-xl flex items-center gap-5 group hover:border-rose-500/30 transition-all">
+          <div className="w-14 h-14 bg-rose-400/10 rounded-2xl flex items-center justify-center text-rose-400 group-hover:scale-110 transition-transform">
+            <Zap className="w-6 h-6" />
           </div>
           <div>
-            <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Today's Cash</p>
-            <h3 className="text-lg font-black text-amber-400 tracking-tighter">${todayStats.todayCash.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Total Expense</p>
+            <h3 className="text-2xl font-black text-rose-400 tracking-tighter">${monthStats.totalExpense.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
           </div>
         </div>
 
-        <div className="bg-slate-900/50 backdrop-blur-md p-5 rounded-[2rem] border border-slate-800 shadow-xl flex items-center gap-4 group hover:border-emerald-500/30 transition-all">
-          <div className="w-10 h-10 bg-emerald-400/10 rounded-xl flex items-center justify-center text-emerald-400 group-hover:scale-110 transition-transform">
-            <TrendingUp className="w-5 h-5" />
+        {/* Total Profit */}
+        <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 shadow-xl flex items-center gap-5 group hover:border-emerald-500/30 transition-all">
+          <div className="w-14 h-14 bg-emerald-400/10 rounded-2xl flex items-center justify-center text-emerald-400 group-hover:scale-110 transition-transform">
+            <TrendingUp className="w-6 h-6" />
           </div>
           <div>
-            <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Today's Profit</p>
-            <h3 className="text-lg font-black text-emerald-400 tracking-tighter">${todayStats.totalProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Total Profit</p>
+            <h3 className="text-2xl font-black text-emerald-400 tracking-tighter">${monthStats.totalProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
           </div>
         </div>
 
-        <div className="bg-slate-900/50 backdrop-blur-md p-5 rounded-[2rem] border border-slate-800 shadow-xl flex items-center gap-4 group hover:border-rose-500/30 transition-all">
-          <div className="w-10 h-10 bg-rose-400/10 rounded-xl flex items-center justify-center text-rose-400 group-hover:scale-110 transition-transform">
-            <Zap className="w-5 h-5" />
+        {/* Total Balance */}
+        <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 shadow-xl flex items-center gap-5 group hover:border-blue-500/30 transition-all">
+          <div className="w-14 h-14 bg-blue-400/10 rounded-2xl flex items-center justify-center text-blue-400 group-hover:scale-110 transition-transform">
+            <Wallet className="w-6 h-6" />
           </div>
           <div>
-            <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Today's Expense</p>
-            <h3 className="text-lg font-black text-rose-400 tracking-tighter">${todayStats.totalExpense.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
-          </div>
-        </div>
-
-        <div className="bg-slate-900/50 backdrop-blur-md p-5 rounded-[2rem] border border-slate-800 shadow-xl flex items-center gap-4 group hover:border-blue-500/30 transition-all">
-          <div className="w-10 h-10 bg-blue-400/10 rounded-xl flex items-center justify-center text-blue-400 group-hover:scale-110 transition-transform">
-            <Wallet className="w-5 h-5" />
-          </div>
-          <div>
-            <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Net Balance</p>
-            <h3 className={`text-lg font-black tracking-tighter ${todayStats.netBalance >= 0 ? 'text-blue-400' : 'text-rose-400'}`}>
-              ${todayStats.netBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Total Balance</p>
+            <h3 className={`text-2xl font-black tracking-tighter ${monthStats.netBalance >= 0 ? 'text-blue-400' : 'text-rose-400'}`}>
+              ${monthStats.netBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </h3>
           </div>
         </div>
+
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">

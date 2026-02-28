@@ -9,9 +9,19 @@ interface WastageProps {
   expenses: Expense[];
   onUpdateStock: (id: string, updates: Partial<Product>) => void | Promise<void>;
   onAddExpense: (expense: any) => void | Promise<void>;
+  onDeleteExpense: (id: string) => void | Promise<void>;
+  canDelete?: boolean;
 }
 
-const Wastage: React.FC<WastageProps> = ({ products, currentStore, expenses, onUpdateStock, onAddExpense }) => {
+const Wastage: React.FC<WastageProps> = ({ 
+  products, 
+  currentStore, 
+  expenses, 
+  onUpdateStock, 
+  onAddExpense,
+  onDeleteExpense,
+  canDelete
+}) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [wasteQuantity, setWasteQuantity] = useState<number | ''>('');
@@ -70,8 +80,38 @@ const Wastage: React.FC<WastageProps> = ({ products, currentStore, expenses, onU
     }
   };
 
+  // 🔴 ডিলিট এবং স্টক রিস্টোর করার নতুন ফাংশন 🔴
+  const handleDeleteWastage = async (expenseId: string, description: string) => {
+    if (!window.confirm("Are you sure you want to delete this record? The wasted stock will be restored to inventory.")) return;
+
+    setIsLoading(true);
+    try {
+      // স্ট্রিং থেকে প্রোডাক্টের নাম এবং কোয়ান্টিটি বের করার লজিক
+      const match = description.match(/Wastage: (.*?) \((\d+) units due to:/);
+      if (match) {
+        const productName = match[1];
+        const qtyToRestore = parseInt(match[2]);
+        
+        const product = products.find(p => p.name === productName && p.storeId === currentStore.id);
+        if (product) {
+          await onUpdateStock(product.id, { quantity: product.quantity + qtyToRestore });
+        } else {
+          alert("Warning: Stock could not be restored because the original product was not found in inventory.");
+        }
+      }
+      
+      await onDeleteExpense(expenseId);
+      setSuccessMsg("Wastage record deleted and stock restored successfully!");
+      setTimeout(() => setSuccessMsg(''), 3000);
+    } catch (error: any) {
+      alert(`Deletion failed: ${error.message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return (
-    <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in duration-700">
+    <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in duration-700 pb-20">
       <div className="flex items-center gap-3 mb-6">
         <div className="p-3 bg-rose-500/20 rounded-2xl text-rose-500">
           <Trash2 className="w-6 h-6" />
@@ -198,7 +238,7 @@ const Wastage: React.FC<WastageProps> = ({ products, currentStore, expenses, onU
                 </tr>
               ) : (
                 wastageHistory.map(w => (
-                  <tr key={w.id} className="border-b border-slate-800/50 hover:bg-slate-800/20 transition-colors">
+                  <tr key={w.id} className="border-b border-slate-800/50 hover:bg-slate-800/20 transition-colors group">
                     <td className="p-4 font-medium text-slate-300">
                       {new Date(w.timestamp).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
                     </td>
@@ -206,7 +246,18 @@ const Wastage: React.FC<WastageProps> = ({ products, currentStore, expenses, onU
                       {w.description}
                     </td>
                     <td className="p-4 font-black text-rose-500 text-right">
-                      ${w.amount.toFixed(2)}
+                      <div className="flex items-center justify-end gap-3">
+                         <span>${w.amount.toFixed(2)}</span>
+                         {canDelete && (
+                           <button 
+                             onClick={() => handleDeleteWastage(w.id, w.description)} 
+                             className="p-2 text-slate-600 hover:text-rose-500 hover:bg-rose-500/10 rounded-xl transition-all opacity-0 group-hover:opacity-100"
+                             title="Delete Record & Restore Stock"
+                           >
+                             <Trash2 className="w-4 h-4" />
+                           </button>
+                         )}
+                      </div>
                     </td>
                   </tr>
                 ))

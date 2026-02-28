@@ -14,7 +14,8 @@ import {
   EyeOff,
   AlertCircle,
   Edit2,
-  Check
+  Check,
+  Phone // 🔴 Phone আইকন যুক্ত করা হয়েছে 🔴
 } from 'lucide-react';
 
 interface UsersProps {
@@ -85,6 +86,7 @@ const Users: React.FC<UsersProps> = ({ users, stores, setUsers }) => {
 
   const filteredUsers = users.filter(u => 
     u.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+    (u.phone && u.phone.includes(searchTerm)) ||
     u.role.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
@@ -108,17 +110,19 @@ const Users: React.FC<UsersProps> = ({ users, stores, setUsers }) => {
     
     const form = e.target as HTMLFormElement;
     const name = form.userName.value;
+    const phone = form.userPhone?.value || null; // 🔴 ফোন নাম্বার সংগ্রহ করা হচ্ছে 🔴
     const role = form.userRole.value as UserRole;
     const assignedStoreId = form.userStore.value || null; // Empty string should be null for DB
     const password = form.userPass.value;
 
     const userPayload = {
       name,
+      phone, // 🔴 ডাটাবেস পে-লোডে যোগ করা হলো 🔴
       role,
       assignedStoreId: role === UserRole.SUPER_ADMIN ? null : assignedStoreId,
       password,
       permissions: role === UserRole.SUPER_ADMIN ? FULL_PERMISSIONS : permissions,
-      avatar: editingUser ? editingUser.avatar : `https://picsum.photos/seed/${name}/200`
+      avatar: editingUser ? editingUser.avatar : `https://picsum.photos/seed/${name.replace(/\s+/g, '')}/200`
     };
 
     try {
@@ -248,6 +252,15 @@ const Users: React.FC<UsersProps> = ({ users, stores, setUsers }) => {
                <div className="relative z-10 flex-1 flex flex-col justify-between space-y-4">
                   <div>
                     <h3 className="text-xl font-black text-white tracking-tight group-hover:gold-gradient-text transition-all duration-500 truncate">{user.name}</h3>
+                    
+                    {/* 🔴 কার্ডে ফোন নাম্বার শো করানো হচ্ছে 🔴 */}
+                    {user.phone && (
+                      <div className="flex items-center gap-2 mt-2 text-slate-400">
+                        <Phone className="w-3.5 h-3.5 shrink-0 text-amber-500" />
+                        <span className="text-xs font-bold tracking-widest">{user.phone}</span>
+                      </div>
+                    )}
+                    
                     <div className="flex items-center gap-2 mt-1 text-slate-500">
                       <Warehouse className="w-3.5 h-3.5 shrink-0" />
                       <span className="text-[10px] font-bold uppercase tracking-widest truncate">{getStoreName(user.assignedStoreId)}</span>
@@ -290,6 +303,12 @@ const Users: React.FC<UsersProps> = ({ users, stores, setUsers }) => {
                     <div className="space-y-2">
                       <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Legal Nomenclature</label>
                       <input name="userName" required defaultValue={editingUser?.name} placeholder="Full Operational Name" className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 amber-glow" />
+                    </div>
+
+                    {/* 🔴 ফর্মে ফোন নাম্বারের ফিল্ড যুক্ত করা হলো 🔴 */}
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Contact Number (Optional)</label>
+                      <input name="userPhone" defaultValue={editingUser?.phone} placeholder="+8801..." className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 amber-glow" />
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">

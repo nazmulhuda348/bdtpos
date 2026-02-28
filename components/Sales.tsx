@@ -21,7 +21,9 @@ import {
   TrendingUp,
   Printer,
   Download,
-  CreditCard
+  CreditCard,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 
 import { motion, AnimatePresence } from 'framer-motion';
@@ -57,14 +59,22 @@ const Sales: React.FC<SalesProps> = ({
 }) => {
   const [isSessionActive, setIsSessionActive] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [filterDate, setFilterDate] = useState('');
   
-  // Scanner Logic
+  const [filterDate, setFilterDate] = useState(() => {
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  });
+
+  const [currentPage, setCurrentPage] = useState(1);
+  const ITEMS_PER_PAGE = 20; 
+
   const [isScanning, setIsScanning] = useState(false);
   const [scannerError, setScannerError] = useState<string | null>(null);
   const scannerRef = useRef<any>(null);
 
-  // Form State
   const [skuId, setSkuId] = useState('');
   const [matchedProduct, setMatchedProduct] = useState<Product | null>(null);
   const [customerId, setCustomerId] = useState('');
@@ -86,6 +96,10 @@ const Sales: React.FC<SalesProps> = ({
       setInvoiceId(`INV-${year}-${formattedCount}`);
     }
   }, [isSessionActive, sales.length, invoiceId]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, filterDate]);
 
   const resetEntryForm = () => {
     setSkuId('');
@@ -229,6 +243,7 @@ const Sales: React.FC<SalesProps> = ({
 
   const handleLedgerQuantityChange = (sale: Sale, newQty: number) => {
     if (isNaN(newQty) || newQty < 1) return;
+    
     const product = products.find(p => p.id === sale.productId);
     if (!product) return;
 
@@ -258,7 +273,6 @@ const Sales: React.FC<SalesProps> = ({
     return sessionSales.reduce((acc, curr) => acc + curr.totalPrice, 0);
   }, [sessionSales]);
 
-  // 🔴 100% BULLETPROOF CALCULATION LOGIC 🔴
   const todayStats = useMemo(() => {
     const today = new Date().toISOString().split('T')[0];
     const todaySales = sales.filter(s => s.storeId === currentStore.id && s.timestamp.startsWith(today));
@@ -267,26 +281,31 @@ const Sales: React.FC<SalesProps> = ({
     let totalSales = 0;
     let todayCash = 0;
     let totalProfit = 0;
+    let totalExpense = 0;
+    let wastageLoss = 0;
 
     todaySales.forEach(s => {
-      // ইনভয়েস নম্বর PAY- দিয়ে শুরু হলে অথবা আইডি PAYMENT_RECEIVED হলে সেটি শুধুমাত্র ক্যাশ রিসিভ
-      const isPayment = s.invoiceId?.startsWith('PAY-') || s.productId === 'PAYMENT_RECEIVED';
-
-      // 1. Today's Cash (সবকিছুর নগদ আদায় যোগ হবে)
+      const isPayment = s.invoiceId?.startsWith('PAY-') || s.productId === 'PAYMENT_RECEIVED' || s.productId === 'SUPPLIER_PAYMENT';
       todayCash += (s.amountPaid || 0);
 
-      // 2. Sales & Profit (পেমেন্ট রিসিভ হলে এগুলো যোগ হবে না)
       if (!isPayment) {
         totalSales += s.totalPrice;
-        
         const product = products.find(p => p.id === s.productId);
         const buyingPrice = product ? product.buyingPrice : s.buyingPrice;
         const cost = buyingPrice * s.quantity;
         totalProfit += (s.totalPrice - cost);
       }
     });
-    
-    const totalExpense = todayExpenses.reduce((acc, e) => acc + e.amount, 0);
+
+    todayExpenses.forEach(e => {
+      if (e.category === 'Wastage') {
+         wastageLoss += e.amount;
+      } else {
+         totalExpense += e.amount;
+      }
+    });
+
+    totalProfit -= wastageLoss; 
     const netBalance = todayCash - totalExpense;
 
     return { totalSales, todayCash, totalProfit, totalExpense, netBalance };
@@ -329,7 +348,6 @@ const Sales: React.FC<SalesProps> = ({
     setShowPrintModal(true);
   };
 
-  // Main View: Historical Ledger
   if (!isSessionActive) {
     const historicalSales = sales
       .filter(s => s.storeId === currentStore.id)
@@ -339,7 +357,14 @@ const Sales: React.FC<SalesProps> = ({
                              s.productName.toLowerCase().includes(searchTerm.toLowerCase());
         const matchesDate = !filterDate || s.timestamp.startsWith(filterDate);
         return matchesSearch && matchesDate;
-      });
+      })
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()); 
+
+    const totalPages = Math.ceil(historicalSales.length / ITEMS_PER_PAGE);
+    const paginatedSales = historicalSales.slice(
+      (currentPage - 1) * ITEMS_PER_PAGE,
+      currentPage * ITEMS_PER_PAGE
+    );
 
     return (
       <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-700">
@@ -419,25 +444,39 @@ const Sales: React.FC<SalesProps> = ({
           </div>
         </div>
 
-        <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 shadow-2xl">
-          <div className="flex flex-col lg:flex-row gap-4 mb-8">
-            <div className="flex-1 relative group">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-amber-400 transition-colors" />
-              <input 
-                type="text" 
-                placeholder="Query invoice, customer or item..." 
-                className="w-full pl-12 pr-4 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 focus:border-amber-400 transition-all amber-glow" 
-                value={searchTerm} 
-                onChange={e => setSearchTerm(e.target.value)} 
-              />
+        <div className="bg-slate-900/50 backdrop-blur-md rounded-[2.5rem] border border-slate-800 shadow-2xl overflow-hidden">
+          <div className="p-6 border-b border-slate-800">
+            <div className="flex flex-col lg:flex-row gap-4">
+              <div className="flex-1 relative group">
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-amber-400 transition-colors" />
+                <input 
+                  type="text" 
+                  placeholder="Query invoice, customer or item..." 
+                  className="w-full pl-12 pr-4 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 focus:border-amber-400 transition-all amber-glow" 
+                  value={searchTerm} 
+                  onChange={e => setSearchTerm(e.target.value)} 
+                />
+              </div>
+              <div className="relative flex items-center gap-2 bg-slate-800 border border-slate-700 rounded-2xl px-4 focus-within:border-amber-400 transition-colors">
+                <input 
+                  type="date" 
+                  className="bg-transparent py-4 outline-none text-xs font-bold text-slate-300 w-full" 
+                  value={filterDate} 
+                  onChange={e => setFilterDate(e.target.value)} 
+                />
+                {filterDate && (
+                  <button onClick={() => setFilterDate('')} className="p-1 text-slate-500 hover:text-rose-400">
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
             </div>
-            <input type="date" className="px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-xs font-bold text-slate-300 focus:border-amber-400" value={filterDate} onChange={e => setFilterDate(e.target.value)} />
           </div>
 
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto min-h-[300px]">
             <table className="w-full text-left">
               <thead>
-                <tr className="text-[10px] font-black text-slate-500 uppercase tracking-widest border-b border-slate-800">
+                <tr className="text-[10px] font-black text-slate-500 uppercase tracking-widest border-b border-slate-800 bg-slate-900/80">
                   <th className="px-6 py-5">Date</th>
                   <th className="px-6 py-5">Invoice</th>
                   <th className="px-6 py-5">Customer</th>
@@ -448,7 +487,7 @@ const Sales: React.FC<SalesProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/50">
-                {historicalSales.map((sale) => {
+                {paginatedSales.map((sale) => {
                   const isPayment = sale.invoiceId?.startsWith('PAY-') || sale.productId === 'PAYMENT_RECEIVED';
                   return (
                     <tr key={sale.id} className="group hover:bg-slate-800/40 transition-all">
@@ -478,7 +517,7 @@ const Sales: React.FC<SalesProps> = ({
                         )}
                       </td>
                       <td className="px-6 py-5 text-right">
-                        <div className="flex items-center justify-end gap-2">
+                        <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                           {!isPayment && (
                             <button onClick={() => handlePrint(sale.invoiceId)} className="p-2 text-slate-600 hover:text-amber-400"><Printer className="w-4 h-4" /></button>
                           )}
@@ -490,15 +529,48 @@ const Sales: React.FC<SalesProps> = ({
                     </tr>
                   );
                 })}
+                {paginatedSales.length === 0 && (
+                  <tr>
+                    <td colSpan={7} className="px-6 py-20 text-center text-slate-500 text-xs font-bold uppercase tracking-widest opacity-50">
+                      No sales records found
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
+          
+          {totalPages > 0 && (
+            <div className="p-4 border-t border-slate-800 bg-slate-900/50 flex flex-col sm:flex-row items-center justify-between gap-4">
+              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                Showing {((currentPage - 1) * ITEMS_PER_PAGE) + 1} to {Math.min(currentPage * ITEMS_PER_PAGE, historicalSales.length)} of {historicalSales.length} entries
+              </p>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                  disabled={currentPage === 1}
+                  className="p-2 bg-slate-800 border border-slate-700 rounded-xl text-slate-400 disabled:opacity-30 hover:bg-slate-700 transition-colors"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <div className="px-4 py-2 bg-amber-400/10 border border-amber-400/20 rounded-xl">
+                   <span className="text-[10px] font-black text-amber-400 uppercase tracking-widest">Page {currentPage} of {totalPages}</span>
+                </div>
+                <button 
+                  onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                  disabled={currentPage === totalPages}
+                  className="p-2 bg-slate-800 border border-slate-700 rounded-xl text-slate-400 disabled:opacity-30 hover:bg-slate-700 transition-colors"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );
   }
 
-  // Session View
   return (
     <div className="h-[calc(100vh-140px)] flex flex-col lg:flex-row gap-8 animate-in fade-in zoom-in-95 duration-500 overflow-hidden">
       <div className="lg:w-[450px] flex flex-col bg-slate-900 border border-slate-800 rounded-[2.5rem] shadow-2xl p-8 overflow-y-auto custom-scrollbar relative">
@@ -525,11 +597,17 @@ const Sales: React.FC<SalesProps> = ({
             <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2 text-amber-500">sku identifier</label>
             <div className="relative group">
               <ScanLine className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-amber-400 transition-colors" />
+              {/* 🔴 এখানে স্ক্যানারের Auto Enter বাটন ব্লক করা হয়েছে 🔴 */}
               <input 
                 required 
                 value={skuId}
                 autoFocus
                 onChange={e => handleSkuLookup(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault(); 
+                  }
+                }}
                 placeholder="Search SKU..." 
                 className={`w-full pl-12 pr-14 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 amber-glow ${matchedProduct ? 'bg-slate-800/50 border-amber-400/30' : ''}`} 
               />
