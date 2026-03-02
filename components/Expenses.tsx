@@ -17,7 +17,8 @@ import {
   Tag,
   ClipboardList,
   Settings,
-  Download
+  Download,
+  Lock // 🔴 Locked আইকনের জন্য
 } from 'lucide-react';
 
 interface ExpensesProps {
@@ -56,13 +57,18 @@ const Expenses: React.FC<ExpensesProps> = ({
   const [newCatName, setNewCatName] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
+  // 🔴 Manual Categories List (Wastage বাদে বাকি সব ম্যানুয়াল) 🔴
+  const manualCategories = useMemo(() => {
+    return expenseCategories.filter(c => c.toLowerCase() !== 'wastage');
+  }, [expenseCategories]);
+
   const filteredExpenses = useMemo(() => {
     return expenses
-      .filter(e => e.storeId === currentStore.id && e.category !== 'Wastage') // 🔴 Wastage ফিল্টার করা হয়েছে 🔴
+      .filter(e => e.storeId === currentStore.id) // 🔴 Wastage এখন লিস্টে দেখাবে, কিন্তু Locked থাকবে 🔴
       .filter(e => {
-        const matchesSearch = e.description.toLowerCase().includes(searchTerm.toLowerCase());
+        const matchesSearch = (e.description || '').toLowerCase().includes(searchTerm.toLowerCase());
         const matchesCategory = selectedCategory === 'All' || e.category === selectedCategory;
-        const matchesDate = !filterDate || e.timestamp.startsWith(filterDate);
+        const matchesDate = !filterDate || (e.timestamp && e.timestamp.startsWith(filterDate));
         return matchesSearch && matchesCategory && matchesDate;
       });
   }, [expenses, currentStore.id, searchTerm, selectedCategory, filterDate]);
@@ -77,6 +83,7 @@ const Expenses: React.FC<ExpensesProps> = ({
 
     try {
       const form = e.target as HTMLFormElement;
+      // 🔴 ভুলটি এখানেই ছিল। আমি ডাটাবেসের ফরমেট অনুযায়ী আগের নিয়মে ফেরত নিয়েছি 🔴
       const data = {
         storeId: currentStore.id,
         category: form.expCat.value,
@@ -107,7 +114,7 @@ const Expenses: React.FC<ExpensesProps> = ({
   };
 
   const handleDelete = async (id: string) => {
-    if (window.confirm("Are you sure you want to permanently delete this expenditure?")) {
+    if (window.confirm("Are you sure you want to permanently delete this expenditure? Funds will be reversed automatically.")) {
       try {
         await onDeleteExpense(id);
       } catch (error: any) {
@@ -201,7 +208,7 @@ const Expenses: React.FC<ExpensesProps> = ({
               <h3 className="font-black text-white text-lg tracking-tight">System Memo</h3>
            </div>
            <p className="text-slate-400 text-sm leading-relaxed max-w-2xl">
-            This ledger tracks all non-inventory capital outflows including facility rent, personnel compensation, and utility logistics. Note: Stock wastage is tracked separately in the Wastage module to ensure accurate cash balance calculations.
+            This ledger tracks all non-inventory capital outflows including facility rent, personnel compensation, and utility logistics. System-generated expenses (like Wastage) are locked here and can only be modified from their source module.
            </p>
         </div>
       </div>
@@ -251,47 +258,58 @@ const Expenses: React.FC<ExpensesProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/50">
-              {filteredExpenses.map((e, idx) => (
-                <tr key={e.id} className={`group transition-all duration-300 hover:bg-slate-800/20 ${idx % 2 === 0 ? 'bg-slate-900/10' : ''}`}>
-                  <td className="px-6 py-5">
-                    <span className="bg-slate-800 text-rose-400 text-[10px] px-3 py-1.5 rounded-full font-black uppercase tracking-widest border border-rose-500/20 group-hover:border-rose-500/50 transition-all">
-                      {e.category}
-                    </span>
-                  </td>
-                  <td className="px-6 py-5">
-                    <p className="text-sm font-bold text-white tracking-tight line-clamp-1">{e.description}</p>
-                  </td>
-                  <td className="px-6 py-5">
-                    <div className="flex flex-col">
-                      <span className="text-xs font-bold text-slate-300">{new Date(e.timestamp).toLocaleDateString()}</span>
-                      <span className="text-[10px] text-slate-500 font-bold uppercase tracking-tighter">{new Date(e.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-5 text-right">
-                    <span className="text-sm font-black text-rose-500 tracking-tight">-${e.amount.toFixed(2)}</span>
-                  </td>
-                  <td className="px-6 py-5 text-right">
-                    <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                      {canEdit && (
-                        <button 
-                          onClick={() => handleEdit(e)}
-                          className="p-2.5 text-slate-500 hover:text-white hover:bg-slate-800 rounded-xl transition-all"
-                        >
-                          <Edit2 className="w-4 h-4" />
-                        </button>
+              {filteredExpenses.map((e, idx) => {
+                // 🔴 Strict Lock: ম্যানুয়াল লিস্টে না থাকলে বা Wastage হলে লকড হয়ে যাবে 🔴
+                const isAutoGenerated = !manualCategories.includes(e.category) || e.category.toLowerCase() === 'wastage';
+
+                return (
+                  <tr key={e.id} className={`group transition-all duration-300 hover:bg-slate-800/20 ${idx % 2 === 0 ? 'bg-slate-900/10' : ''}`}>
+                    <td className="px-6 py-5">
+                      <span className={`text-[10px] px-3 py-1.5 rounded-full font-black uppercase tracking-widest border transition-all ${isAutoGenerated ? 'bg-amber-400/10 text-amber-400 border-amber-400/20' : 'bg-slate-800 text-rose-400 border-rose-500/20 group-hover:border-rose-500/50'}`}>
+                        {e.category}
+                      </span>
+                    </td>
+                    <td className="px-6 py-5">
+                      <p className="text-sm font-bold text-white tracking-tight line-clamp-1">{e.description}</p>
+                    </td>
+                    <td className="px-6 py-5">
+                      <div className="flex flex-col">
+                        <span className="text-xs font-bold text-slate-300">{e.timestamp ? new Date(e.timestamp).toLocaleDateString() : 'N/A'}</span>
+                        <span className="text-[10px] text-slate-500 font-bold uppercase tracking-tighter">{e.timestamp ? new Date(e.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-5 text-right">
+                      <span className="text-sm font-black text-rose-500 tracking-tight">-${e.amount.toFixed(2)}</span>
+                    </td>
+                    <td className="px-6 py-5 text-right">
+                      {isAutoGenerated ? (
+                        <div className="flex items-center justify-end text-slate-600 gap-1 opacity-50" title="Auto-generated: Edit/Delete from source tab">
+                          <Lock className="w-4 h-4" /> <span className="text-[10px] uppercase font-black tracking-widest">Locked</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                          {canEdit && (
+                            <button 
+                              onClick={() => handleEdit(e)}
+                              className="p-2.5 text-slate-500 hover:text-white hover:bg-slate-800 rounded-xl transition-all"
+                            >
+                              <Edit2 className="w-4 h-4" />
+                            </button>
+                          )}
+                          {canDelete && (
+                            <button 
+                              onClick={() => handleDelete(e.id)}
+                              className="p-2.5 text-slate-500 hover:text-rose-500 hover:bg-rose-500/10 rounded-xl transition-all"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
                       )}
-                      {canDelete && (
-                        <button 
-                          onClick={() => handleDelete(e.id)}
-                          className="p-2.5 text-slate-500 hover:text-rose-500 hover:bg-rose-500/10 rounded-xl transition-all"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                  </tr>
+                );
+              })}
               {filteredExpenses.length === 0 && (
                 <tr>
                   <td colSpan={5} className="px-6 py-24 text-center">
@@ -340,7 +358,10 @@ const Expenses: React.FC<ExpensesProps> = ({
                    {expenseCategories.map(cat => (
                      <div key={cat} className="flex justify-between items-center bg-slate-800/50 p-4 rounded-2xl border border-slate-700/50 group hover:border-rose-500/30 transition-all">
                         <span className="text-sm font-bold text-slate-200 uppercase tracking-widest">{cat}</span>
-                        <button onClick={() => onRemoveExpenseCategory(cat)} className="text-slate-600 hover:text-rose-500 transition-colors p-2"><Trash2 className="w-4 h-4" /></button>
+                        {/* 🔴 Locked ক্যাটাগরিগুলো ডিলিট করা যাবে না 🔴 */}
+                        {cat !== 'Salary' && cat !== 'Rent' && cat !== 'Transport' && cat !== 'Utilities' && cat.toLowerCase() !== 'wastage' && (
+                           <button onClick={() => onRemoveExpenseCategory(cat)} className="text-slate-600 hover:text-rose-500 transition-colors p-2"><Trash2 className="w-4 h-4" /></button>
+                        )}
                      </div>
                    ))}
                 </div>
@@ -376,7 +397,8 @@ const Expenses: React.FC<ExpensesProps> = ({
                         defaultValue={editingExpense?.category} 
                         className="w-full pl-12 pr-4 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-rose-500 appearance-none"
                       >
-                        {expenseCategories.map(c => <option key={c} value={c}>{c}</option>)}
+                        {/* 🔴 শুধুমাত্র ম্যানুয়াল ক্যাটাগরিগুলোই ড্রপডাউনে আসবে 🔴 */}
+                        {manualCategories.map(c => <option key={c} value={c}>{c}</option>)}
                       </select>
                     </div>
                   </div>
@@ -424,3 +446,4 @@ const Expenses: React.FC<ExpensesProps> = ({
 };
 
 export default Expenses;
+<div className="space-y-8 animate-in fade-in duration-700"></div>

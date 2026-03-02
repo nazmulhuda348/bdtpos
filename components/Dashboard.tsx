@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase';
 import { 
   DollarSign, TrendingUp, Package, AlertTriangle, ShoppingCart, 
   Zap, Wallet, LayoutDashboard, Check, Calendar, CreditCard, 
-  QrCode, X, CheckCircle2, Clock 
+  QrCode, X, CheckCircle2, Clock, Activity 
 } from 'lucide-react';
 
 interface DashboardProps {
@@ -13,9 +13,10 @@ interface DashboardProps {
   sales: Sale[];
   expenses: Expense[];
   currentUser: User;
+  activities?: any[];
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ products, currentStore, sales, expenses, currentUser }) => {
+const Dashboard: React.FC<DashboardProps> = ({ products, currentStore, sales, expenses, currentUser, activities = [] }) => {
 
   const [selectedMonth, setSelectedMonth] = useState<string>(() => {
     const now = new Date();
@@ -28,28 +29,20 @@ const Dashboard: React.FC<DashboardProps> = ({ products, currentStore, sales, ex
   const [trxId, setTrxId] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // আপনার দেওয়া বিকাশ নাম্বার
   const bKashNumber = "01633334466"; 
 
-  // 🔴 অ্যাডমিনের সেট করা মাস থেকে শুরু করে একদম সলিড ম্যাথ (Math) লজিক 🔴
   const getCheckableMonths = () => {
     const months = [];
     const now = new Date();
     const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     const startMonthStr = currentStore.billingStartMonth || currentMonthStr; 
-
     let [startYear, startMonth] = startMonthStr.split('-').map(Number);
     const [endYear, endMonth] = currentMonthStr.split('-').map(Number);
-
     let count = 0;
-    // টাইমজোন ইস্যু এড়াতে সলিড লুপ ব্যবহার করা হলো
     while ((startYear < endYear || (startYear === endYear && startMonth <= endMonth)) && count < 60) {
       months.push(`${startYear}-${String(startMonth).padStart(2, '0')}`);
       startMonth++;
-      if (startMonth > 12) {
-        startMonth = 1;
-        startYear++;
-      }
+      if (startMonth > 12) { startMonth = 1; startYear++; }
       count++;
     }
     return months.length > 0 ? months : [currentMonthStr];
@@ -57,89 +50,47 @@ const Dashboard: React.FC<DashboardProps> = ({ products, currentStore, sales, ex
 
   const relevantMonths = getCheckableMonths();
 
-  const fetchPaymentStatus = async () => {
-    setIsLoadingStatus(true);
-    try {
-      const { data } = await supabase
-        .from('store_payments')
-        .select('*')
-        .eq('storeId', currentStore.id)
-        .in('monthYear', relevantMonths);
-      
-      setPaymentHistory(data || []);
-    } catch (err) {
-      console.error("Fetch Error:", err);
-    } finally {
-      setIsLoadingStatus(false);
-    }
-  };
-
   useEffect(() => {
+    const fetchPaymentStatus = async () => {
+      setIsLoadingStatus(true);
+      const { data } = await supabase.from('store_payments').select('*').eq('storeId', currentStore.id).in('monthYear', relevantMonths);
+      setPaymentHistory(data || []);
+      setIsLoadingStatus(false);
+    };
     fetchPaymentStatus();
   }, [currentStore.id]);
 
-  // 🔴 মাল্টিপল এন্ট্রি স্ক্যান করে সঠিক স্ট্যাটাস বের করার শক্তিশালী লজিক 🔴
   const targetMonthData = useMemo(() => {
     for (const month of relevantMonths) {
-      // ওই মাসের সব রেকর্ড বের করা হলো
       const records = paymentHistory.filter(p => p.monthYear === month);
-      
-      // মাসের সুন্দর নাম (যেমন: February 2026)
       const [y, m] = month.split('-').map(Number);
       const monthName = new Date(y, m - 1, 1).toLocaleString('default', { month: 'long', year: 'numeric' });
-      
-      // ১. ওই মাসে কি কোনো 'PAID' আছে? থাকলে এই মাস ক্লিয়ার, স্কিপ করো!
       const hasPaid = records.some(p => p.status === 'PAID');
       if (hasPaid) continue;
-      
-      // ২. 'PAID' না থাকলে, কি কোনো 'PENDING' আছে?
       const pendingRecord = records.find(p => p.status === 'PENDING');
-      if (pendingRecord) {
-         return { monthYear: month, status: 'PENDING', record: pendingRecord, monthName };
-      }
-      
-      // ৩. কিছুই না থাকলে (বা শুধু রিজেক্টেড থাকলে), তার মানে 'DUE'
+      if (pendingRecord) return { monthYear: month, status: 'PENDING', record: pendingRecord, monthName };
       return { monthYear: month, status: 'DUE', record: null, monthName };
     }
-    
-    // লুপ কোনো বকেয়া না পেয়ে শেষ হলে, মানে সব মাস PAID!
     const lastMonth = relevantMonths[relevantMonths.length - 1];
     const [y, m] = lastMonth.split('-').map(Number);
-    const monthName = new Date(y, m - 1, 1).toLocaleString('default', { month: 'long', year: 'numeric' });
-    
-    return { monthYear: lastMonth, status: 'PAID', record: null, monthName };
+    return { monthYear: lastMonth, status: 'PAID', record: null, monthName: new Date(y, m - 1, 1).toLocaleString('default', { month: 'long', year: 'numeric' }) };
   }, [paymentHistory, relevantMonths]);
 
   const submitPaymentTrx = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!trxId.trim()) return;
     setIsSubmitting(true);
-
     try {
-      const payload = {
-        storeId: currentStore.id,
-        monthYear: targetMonthData.monthYear,
-        amountPaid: currentStore.monthlyFee || 0,
-        paymentDate: new Date().toISOString(),
-        trxId: trxId.trim(),
-        status: 'PENDING'
-      };
-
+      const payload = { storeId: currentStore.id, monthYear: targetMonthData.monthYear, amountPaid: currentStore.monthlyFee || 0, paymentDate: new Date().toISOString(), trxId: trxId.trim(), status: 'PENDING' };
       const { data, error } = await supabase.from('store_payments').insert([payload]).select().single();
       if (error) throw error;
-      
       setPaymentHistory(prev => [...prev, data]);
       setIsPaymentModalOpen(false);
       alert(`Payment submitted for ${targetMonthData.monthName}!`);
-    } catch (error: any) {
-      alert(`Submission failed: ${error.message}`);
-    } finally {
-      setIsSubmitting(false);
-      setTrxId('');
-    }
+    } catch (error: any) { alert(`Submission failed: ${error.message}`); } 
+    finally { setIsSubmitting(false); setTrxId(''); }
   };
 
-  // ইনভেন্টরি ও সেলস লজিক (আপনার আগের কোড)
   const inventoryStats = useMemo(() => {
     const storeProducts = products.filter(p => p.storeId === currentStore.id);
     const stockEquity = storeProducts.reduce((acc, p) => acc + (p.quantity * p.buyingPrice), 0);
@@ -148,7 +99,7 @@ const Dashboard: React.FC<DashboardProps> = ({ products, currentStore, sales, ex
   }, [products, currentStore.id]);
 
   const monthStats = useMemo(() => {
-    const filteredSales = sales.filter(s => s.storeId === currentStore.id && (!selectedMonth || s.timestamp.startsWith(selectedMonth)));
+    const filteredSales = sales.filter(s => s.storeId === currentStore.id && (!selectedMonth || s.timestamp.startsWith(selectedMonth)) && !s.invoiceId?.startsWith('VOID-'));
     const filteredExpenses = expenses.filter(e => e.storeId === currentStore.id && (!selectedMonth || e.timestamp.startsWith(selectedMonth)));
     let totalSales = 0, totalCashIn = 0, totalProfit = 0, totalExpense = 0, wastageLoss = 0;
     filteredSales.forEach(s => {
@@ -157,8 +108,7 @@ const Dashboard: React.FC<DashboardProps> = ({ products, currentStore, sales, ex
       if (!isPayment) {
         totalSales += s.totalPrice;
         const product = products.find(p => p.id === s.productId);
-        const buyingPrice = product ? product.buyingPrice : s.buyingPrice;
-        totalProfit += (s.totalPrice - (buyingPrice * s.quantity));
+        totalProfit += (s.totalPrice - ((product ? product.buyingPrice : s.buyingPrice) * s.quantity));
       }
     });
     filteredExpenses.forEach(e => e.category === 'Wastage' ? wastageLoss += e.amount : totalExpense += e.amount);
@@ -167,10 +117,14 @@ const Dashboard: React.FC<DashboardProps> = ({ products, currentStore, sales, ex
 
   const lowStockList = inventoryStats.storeProducts.filter(p => p.quantity <= p.minThreshold);
 
+  const todaysActivities = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0];
+    return activities.filter(a => a.timestamp.startsWith(today)).slice(0, 10);
+  }, [activities]);
+
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
       
-      {/* 🔴 ডাইনামিক সাবস্ক্রিপশন উইজেট 🔴 */}
       {currentUser.role !== UserRole.SUPER_ADMIN && (
         <>
           {isLoadingStatus ? (
@@ -192,7 +146,6 @@ const Dashboard: React.FC<DashboardProps> = ({ products, currentStore, sales, ex
                      targetMonthData.status === 'PENDING' ? `PENDING FOR ${targetMonthData.monthName}` : 
                      `DUE FOR ${targetMonthData.monthName}`}
                   </p>
-                  {targetMonthData.status === 'PENDING' && <p className="text-[10px] text-amber-400/70 mt-1 uppercase font-bold">TrxID: {targetMonthData.record?.trxId} (Under Review)</p>}
                 </div>
               </div>
 
@@ -211,7 +164,6 @@ const Dashboard: React.FC<DashboardProps> = ({ products, currentStore, sales, ex
         </>
       )}
 
-      {/* Header, Stats, Low Stock Table (আপনার অরিজিনাল কোড) */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
         <div>
           <h1 className="text-3xl font-black text-white tracking-tight flex items-center gap-3">Command Center</h1>
@@ -242,49 +194,78 @@ const Dashboard: React.FC<DashboardProps> = ({ products, currentStore, sales, ex
         </div>
       </div>
 
-      <div className="bg-slate-900/50 border border-slate-800 rounded-[2.5rem] shadow-2xl overflow-hidden">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="lg:col-span-1 bg-gradient-to-br from-slate-900 to-slate-900/50 border border-slate-800 rounded-[2.5rem] shadow-2xl p-8 relative overflow-hidden">
+          <div className="absolute top-0 right-0 p-8 opacity-10"><Package className="w-32 h-32 text-amber-400" /></div>
+          <h2 className="text-lg font-black text-white uppercase tracking-widest mb-8 flex items-center gap-3"><LayoutDashboard className="w-5 h-5 text-amber-500" /> Inventory Status</h2>
+          <div className="space-y-6 relative z-10">
+            <div><p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1">Total Assets</p><p className="text-4xl font-black text-white">{inventoryStats.totalItems}</p></div>
+            <div><p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1">Stock Equity</p><p className="text-4xl font-black text-emerald-400">${inventoryStats.stockEquity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p></div>
+          </div>
+        </div>
+
+        <div className="lg:col-span-1 bg-slate-900/50 border border-slate-800 rounded-[2.5rem] shadow-2xl flex flex-col overflow-hidden max-h-[400px]">
           <div className="p-8 border-b border-slate-800 flex items-center justify-between">
              <h2 className="text-lg font-black text-white uppercase tracking-widest flex items-center gap-3"><AlertTriangle className="w-5 h-5 text-rose-500" /> Low Stock Alerts</h2>
           </div>
-          <div className="overflow-x-auto">
+          <div className="flex-1 overflow-y-auto custom-scrollbar">
             <table className="w-full text-left">
-              <thead>
-                <tr className="text-[10px] font-black text-slate-500 uppercase tracking-widest border-b border-slate-800">
-                  <th className="px-8 py-5">Product Name</th><th className="px-8 py-5">SKU</th><th className="px-8 py-5 text-right">Qty</th>
-                </tr>
-              </thead>
-              <tbody>
+              <tbody className="divide-y divide-slate-800/50">
                 {lowStockList.map(p => (
-                  <tr key={p.id} className="border-b border-slate-800/50">
-                    <td className="px-8 py-5 font-bold text-white">{p.name}</td>
-                    <td className="px-8 py-5 text-xs text-slate-500">{p.sku}</td>
-                    <td className="px-8 py-5 text-right text-rose-400 font-black">{p.quantity} left</td>
+                  <tr key={p.id} className="group hover:bg-slate-800/40 transition-all">
+                    <td className="px-8 py-4 font-bold text-white text-sm">{p.name}</td>
+                    <td className="px-8 py-4 text-right text-rose-400 font-black">{p.quantity} left</td>
                   </tr>
                 ))}
+                {lowStockList.length === 0 && (
+                  <tr><td colSpan={2} className="px-8 py-10 text-center opacity-40"><Check className="w-8 h-8 mx-auto text-emerald-500 mb-2" /><p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">All optimal</p></td></tr>
+                )}
               </tbody>
             </table>
           </div>
+        </div>
+
+        <div className="lg:col-span-1 bg-slate-900/50 border border-slate-800 rounded-[2.5rem] shadow-2xl flex flex-col overflow-hidden max-h-[400px]">
+          <div className="p-8 border-b border-slate-800 flex items-center justify-between">
+             <h2 className="text-lg font-black text-white uppercase tracking-widest flex items-center gap-3"><Activity className="w-5 h-5 text-blue-400" /> Today's Log</h2>
+          </div>
+          <div className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-4">
+            {todaysActivities.map(activity => (
+              <div key={activity.id} className="bg-slate-800/50 p-4 rounded-2xl border border-slate-700/50">
+                <p className="text-xs text-white font-bold">{activity.text}</p>
+                <div className="flex justify-between mt-2">
+                  <span className="text-[10px] text-amber-400 font-black tracking-widest uppercase">{activity.user}</span>
+                  <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{new Date(activity.timestamp).toLocaleTimeString()}</span>
+                </div>
+              </div>
+            ))}
+            {todaysActivities.length === 0 && (
+               <div className="text-center opacity-40 py-10"><Activity className="w-8 h-8 mx-auto text-blue-500 mb-2" /><p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">No activity today</p></div>
+            )}
+          </div>
+        </div>
       </div>
 
       {isPaymentModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
           <div className="bg-slate-900 w-full max-w-md rounded-[2.5rem] border border-slate-800 shadow-2xl p-8 relative">
              <button onClick={() => setIsPaymentModalOpen(false)} className="absolute top-6 right-6 text-slate-500 hover:text-white"><X className="w-6 h-6" /></button>
-             <h2 className="text-2xl font-black text-white mb-2 tracking-tight flex items-center gap-2"><CreditCard className="w-6 h-6 text-pink-500" /> bKash Payment</h2>
-             <p className="text-xs text-slate-400 font-bold mb-6 uppercase tracking-widest">Paying for: <span className="text-amber-400">{targetMonthData.monthName}</span></p>
-             <div className="bg-slate-950 rounded-3xl p-6 flex flex-col items-center justify-center border border-slate-800 mb-6">
-                <QrCode className="w-32 h-32 text-slate-300 mb-4 opacity-50" />
-                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Send Money To</p>
-                <p className="text-xl font-black text-pink-500 tracking-widest">{bKashNumber}</p>
-             </div>
-             <form onSubmit={submitPaymentTrx} className="space-y-4">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2">Enter TrxID</label>
-                  <input type="text" required value={trxId} onChange={(e) => setTrxId(e.target.value.toUpperCase())} className="w-full px-5 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-black uppercase tracking-widest focus:border-pink-500" />
+             <h2 className="text-2xl font-black text-white mb-6 flex items-center gap-2"><CreditCard className="w-6 h-6 text-pink-500" /> bKash Payment</h2>
+             
+             {/* 🔴 bKash Number & QR Section Added Back 🔴 */}
+             <div className="bg-slate-800/50 p-6 rounded-2xl border border-slate-700/50 text-center mb-6 shadow-inner">
+                <QrCode className="w-16 h-16 text-pink-500 mx-auto mb-3" />
+                <p className="text-xs text-slate-400 font-bold uppercase tracking-widest mb-1">Send Money to bKash</p>
+                <p className="text-3xl font-black text-white tracking-widest">{bKashNumber}</p>
+                <div className="mt-4 inline-block bg-pink-500/20 text-pink-400 px-4 py-2 rounded-xl border border-pink-500/30">
+                  <p className="text-[10px] font-black uppercase tracking-widest">Amount to Pay</p>
+                  <p className="text-lg font-black">${currentStore.monthlyFee || 0}</p>
                 </div>
-                <button type="submit" disabled={isSubmitting} className="w-full bg-pink-500 text-white py-5 rounded-[2rem] font-black uppercase tracking-widest text-xs shadow-lg disabled:opacity-50">
-                  {isSubmitting ? 'Submitting...' : `Submit for ${targetMonthData.monthName}`}
-                </button>
+             </div>
+
+             <form onSubmit={submitPaymentTrx} className="space-y-4">
+                <input type="text" required value={trxId} onChange={(e) => setTrxId(e.target.value.toUpperCase())} placeholder="Enter TrxID after payment" className="w-full px-5 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-black uppercase tracking-widest focus:border-pink-500 text-center" />
+                <button type="submit" disabled={isSubmitting} className="w-full bg-pink-500 text-white py-5 rounded-[2rem] font-black uppercase tracking-widest text-xs shadow-lg disabled:opacity-50 hover:bg-pink-600 transition-colors">Submit Transaction</button>
              </form>
           </div>
         </div>

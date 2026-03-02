@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { User, Store, UserRole, UserPermissions } from '../types';
-import { supabase } from '../lib/supabase'; // Supabase Import
+import { supabase } from '../lib/supabase';
 import { 
   Users as UsersIcon, 
   Plus, 
@@ -15,7 +15,8 @@ import {
   AlertCircle,
   Edit2,
   Check,
-  Phone // 🔴 Phone আইকন যুক্ত করা হয়েছে 🔴
+  Phone,
+  RefreshCw
 } from 'lucide-react';
 
 interface UsersProps {
@@ -77,6 +78,26 @@ const Users: React.FC<UsersProps> = ({ users, stores, setUsers }) => {
   const [selectedRole, setSelectedRole] = useState<UserRole>(UserRole.SALESMAN);
   const [permissions, setPermissions] = useState<UserPermissions>(DEFAULT_PERMISSIONS);
   const [isLoading, setIsLoading] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  useEffect(() => {
+    const fetchLatestUsers = async () => {
+      setIsSyncing(true);
+      try {
+        const { data, error } = await supabase.from('users').select('*');
+        if (error) throw error;
+        if (data) {
+          setUsers(data as User[]);
+        }
+      } catch (err) {
+        console.error("Failed to sync users:", err);
+      } finally {
+        setIsSyncing(false);
+      }
+    };
+    
+    fetchLatestUsers();
+  }, [setUsers]);
 
   useEffect(() => {
     if (selectedRole === UserRole.SUPER_ADMIN) {
@@ -110,14 +131,14 @@ const Users: React.FC<UsersProps> = ({ users, stores, setUsers }) => {
     
     const form = e.target as HTMLFormElement;
     const name = form.userName.value;
-    const phone = form.userPhone?.value || null; // 🔴 ফোন নাম্বার সংগ্রহ করা হচ্ছে 🔴
+    const phone = form.userPhone?.value || null;
     const role = form.userRole.value as UserRole;
-    const assignedStoreId = form.userStore.value || null; // Empty string should be null for DB
+    const assignedStoreId = form.userStore.value || null; 
     const password = form.userPass.value;
 
     const userPayload = {
       name,
-      phone, // 🔴 ডাটাবেস পে-লোডে যোগ করা হলো 🔴
+      phone, 
       role,
       assignedStoreId: role === UserRole.SUPER_ADMIN ? null : assignedStoreId,
       password,
@@ -127,7 +148,6 @@ const Users: React.FC<UsersProps> = ({ users, stores, setUsers }) => {
 
     try {
       if (editingUser) {
-        // Update existing user in Supabase
         const { data, error } = await supabase
           .from('users')
           .update(userPayload)
@@ -145,7 +165,6 @@ const Users: React.FC<UsersProps> = ({ users, stores, setUsers }) => {
           alert('Identity Synchronized: Personnel credentials updated.');
         }
       } else {
-        // Create new user in Supabase
         const { data, error } = await supabase
           .from('users')
           .insert([userPayload])
@@ -178,7 +197,6 @@ const Users: React.FC<UsersProps> = ({ users, stores, setUsers }) => {
   };
 
   const removeUser = async (id: string) => {
-    // Prevent deleting the main admin
     const userToDelete = users.find(u => u.id === id);
     if (userToDelete?.name === 'Admin' && userToDelete?.role === UserRole.SUPER_ADMIN) {
       alert("Critical Error: Cannot delete the primary Super Admin.");
@@ -206,7 +224,10 @@ const Users: React.FC<UsersProps> = ({ users, stores, setUsers }) => {
     <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-700">
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
         <div>
-          <h1 className="text-3xl font-black text-white tracking-tight">Personnel Governance</h1>
+          <h1 className="text-3xl font-black text-white tracking-tight flex items-center gap-3">
+            Personnel Governance
+            {isSyncing && <RefreshCw className="w-5 h-5 text-amber-500 animate-spin" />}
+          </h1>
           <p className="text-slate-500 font-medium">Global access directory and branch assignments</p>
         </div>
         <button 
@@ -231,65 +252,68 @@ const Users: React.FC<UsersProps> = ({ users, stores, setUsers }) => {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredUsers.map(user => (
-            <div key={user.id} className="bg-slate-900 border border-slate-800 rounded-3xl p-6 group hover:border-amber-400/30 transition-all relative overflow-hidden flex flex-col h-full">
-               <div className="absolute top-0 right-0 w-24 h-24 bg-amber-400/5 rounded-full -mr-12 -mt-12 blur-2xl group-hover:bg-amber-400/10 transition-colors"></div>
-               
-               <div className="flex items-start justify-between relative z-10 mb-6">
-                  <img src={user.avatar} alt={user.name} className="w-16 h-16 rounded-2xl border-2 border-slate-800 grayscale group-hover:grayscale-0 transition-all duration-500 object-cover" />
-                  <div className="flex flex-col items-end">
-                    <span className={`px-3 py-1 rounded-xl text-[9px] font-black uppercase tracking-widest border ${
-                      user.role === UserRole.SUPER_ADMIN ? 'bg-amber-400/10 text-amber-400 border-amber-400/20' : 
-                      user.role === UserRole.MANAGER ? 'bg-indigo-400/10 text-indigo-400 border-indigo-400/20' : 
-                      'bg-slate-700/50 text-slate-400 border-slate-700'
-                    }`}>
-                      {user.role}
-                    </span>
-                    <p className="text-[10px] text-slate-500 font-bold mt-2 font-mono">#{user.id.substring(0, 8)}</p>
-                  </div>
-               </div>
+          {filteredUsers.map(user => {
+            const isStoreOwner = user.role === ('STORE_OWNER' as UserRole);
 
-               <div className="relative z-10 flex-1 flex flex-col justify-between space-y-4">
-                  <div>
-                    <h3 className="text-xl font-black text-white tracking-tight group-hover:gold-gradient-text transition-all duration-500 truncate">{user.name}</h3>
-                    
-                    {/* 🔴 কার্ডে ফোন নাম্বার শো করানো হচ্ছে 🔴 */}
-                    {user.phone && (
-                      <div className="flex items-center gap-2 mt-2 text-slate-400">
-                        <Phone className="w-3.5 h-3.5 shrink-0 text-amber-500" />
-                        <span className="text-xs font-bold tracking-widest">{user.phone}</span>
+            return (
+              <div key={user.id} className="bg-slate-900 border border-slate-800 rounded-3xl p-6 group hover:border-amber-400/30 transition-all relative overflow-hidden flex flex-col h-full">
+                 <div className={`absolute top-0 right-0 w-24 h-24 rounded-full -mr-12 -mt-12 blur-2xl transition-colors ${isStoreOwner ? 'bg-emerald-400/5 group-hover:bg-emerald-400/10' : 'bg-amber-400/5 group-hover:bg-amber-400/10'}`}></div>
+                 
+                 {/* 🔴 Image Tag Removed. Using justify-end to align role badge correctly 🔴 */}
+                 <div className="flex items-start justify-end relative z-10 mb-6">
+                    <div className="flex flex-col items-end">
+                      <span className={`px-3 py-1 rounded-xl text-[9px] font-black uppercase tracking-widest border ${
+                        user.role === UserRole.SUPER_ADMIN ? 'bg-amber-400/10 text-amber-400 border-amber-400/20' : 
+                        isStoreOwner ? 'bg-emerald-400/10 text-emerald-400 border-emerald-400/20' : 
+                        user.role === UserRole.MANAGER ? 'bg-indigo-400/10 text-indigo-400 border-indigo-400/20' : 
+                        'bg-slate-700/50 text-slate-400 border-slate-700'
+                      }`}>
+                        {user.role.replace('_', ' ')}
+                      </span>
+                      <p className="text-[10px] text-slate-500 font-bold mt-2 font-mono">#{user.id.substring(0, 8)}</p>
+                    </div>
+                 </div>
+
+                 <div className="relative z-10 flex-1 flex flex-col justify-between space-y-4">
+                    <div>
+                      <h3 className={`text-xl font-black tracking-tight transition-all duration-500 truncate ${isStoreOwner ? 'group-hover:text-emerald-400 text-white' : 'group-hover:gold-gradient-text text-white'}`}>{user.name}</h3>
+                      
+                      {user.phone && (
+                        <div className="flex items-center gap-2 mt-2 text-slate-400">
+                          <Phone className={`w-3.5 h-3.5 shrink-0 ${isStoreOwner ? 'text-emerald-500' : 'text-amber-500'}`} />
+                          <span className="text-xs font-bold tracking-widest">{user.phone}</span>
+                        </div>
+                      )}
+                      
+                      <div className="flex items-center gap-2 mt-1 text-slate-500">
+                        <Warehouse className="w-3.5 h-3.5 shrink-0" />
+                        <span className="text-[10px] font-bold uppercase tracking-widest truncate">{getStoreName(user.assignedStoreId)}</span>
                       </div>
-                    )}
-                    
-                    <div className="flex items-center gap-2 mt-1 text-slate-500">
-                      <Warehouse className="w-3.5 h-3.5 shrink-0" />
-                      <span className="text-[10px] font-bold uppercase tracking-widest truncate">{getStoreName(user.assignedStoreId)}</span>
                     </div>
-                  </div>
 
-                  <div className="pt-4 border-t border-slate-800 flex justify-between items-center mt-auto">
-                    <div className="flex items-center gap-2">
-                      <Shield className={`w-4 h-4 ${user.role === UserRole.SUPER_ADMIN ? 'text-amber-500' : 'text-slate-600'}`} />
-                      <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Clearance Lvl {user.role === UserRole.SUPER_ADMIN ? '3' : user.role === UserRole.MANAGER ? '2' : '1'}</span>
+                    <div className="pt-4 border-t border-slate-800 flex justify-between items-center mt-auto">
+                      <div className="flex items-center gap-2">
+                        <Shield className={`w-4 h-4 ${user.role === UserRole.SUPER_ADMIN ? 'text-amber-500' : isStoreOwner ? 'text-emerald-500' : 'text-slate-600'}`} />
+                        <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Clearance Lvl {user.role === UserRole.SUPER_ADMIN ? '3' : (user.role === UserRole.MANAGER || isStoreOwner) ? '2' : '1'}</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => handleOpenEditModal(user)} className="p-2.5 text-slate-600 hover:text-amber-400 hover:bg-amber-400/10 rounded-xl transition-all"><Edit2 className="w-4 h-4" /></button>
+                        <button 
+                          onClick={() => removeUser(user.id)} 
+                          className="p-2.5 text-slate-600 hover:text-rose-500 hover:bg-rose-500/10 rounded-xl transition-all"
+                          title={user.name === 'Admin' ? "Cannot delete primary admin" : "Delete user"}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-1">
-                      <button onClick={() => handleOpenEditModal(user)} className="p-2.5 text-slate-600 hover:text-amber-400 hover:bg-amber-400/10 rounded-xl transition-all"><Edit2 className="w-4 h-4" /></button>
-                      <button 
-                        onClick={() => removeUser(user.id)} 
-                        className="p-2.5 text-slate-600 hover:text-rose-500 hover:bg-rose-500/10 rounded-xl transition-all"
-                        title={user.name === 'Admin' ? "Cannot delete primary admin" : "Delete user"}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-               </div>
-            </div>
-          ))}
+                 </div>
+              </div>
+            );
+          })}
         </div>
       </div>
 
-      {/* Provisioning Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md overflow-y-auto">
           <div className="bg-slate-900 w-full max-w-2xl rounded-[2.5rem] border border-slate-800 shadow-2xl p-8 my-8 relative animate-in zoom-in-95 duration-300">
@@ -305,7 +329,6 @@ const Users: React.FC<UsersProps> = ({ users, stores, setUsers }) => {
                       <input name="userName" required defaultValue={editingUser?.name} placeholder="Full Operational Name" className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 amber-glow" />
                     </div>
 
-                    {/* 🔴 ফর্মে ফোন নাম্বারের ফিল্ড যুক্ত করা হলো 🔴 */}
                     <div className="space-y-2">
                       <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Contact Number (Optional)</label>
                       <input name="userPhone" defaultValue={editingUser?.phone} placeholder="+8801..." className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 amber-glow" />
@@ -322,6 +345,7 @@ const Users: React.FC<UsersProps> = ({ users, stores, setUsers }) => {
                         >
                           <option value={UserRole.SALESMAN}>Salesman</option>
                           <option value={UserRole.MANAGER}>Store Manager</option>
+                          <option value={'STORE_OWNER' as UserRole}>Store Owner</option>
                           <option value={UserRole.SUPER_ADMIN}>Super Admin</option>
                         </select>
                       </div>
@@ -351,7 +375,7 @@ const Users: React.FC<UsersProps> = ({ users, stores, setUsers }) => {
 
                     <div className="bg-amber-400/5 p-4 rounded-2xl border border-amber-400/10 flex gap-3">
                       <AlertCircle className="w-5 h-5 text-amber-500 shrink-0" />
-                      <p className="text-[10px] text-slate-400 font-medium">Assigned Managers and Salesmen will be restricted to viewing and managing data strictly within their designated Site Hub.</p>
+                      <p className="text-[10px] text-slate-400 font-medium">Assigned Store Owners, Managers and Salesmen will be restricted to viewing and managing data strictly within their designated Site Hub.</p>
                     </div>
                   </div>
 

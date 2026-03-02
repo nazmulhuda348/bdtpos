@@ -10,12 +10,8 @@ import {
   X,
   ArrowRight,
   ScanLine,
-  AlertCircle,
-  Zap,
-  RotateCcw,
   CameraOff,
   Check,
-  Package,
   History,
   LayoutDashboard,
   TrendingUp,
@@ -23,7 +19,10 @@ import {
   Download,
   CreditCard,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  RotateCcw,
+  AlertOctagon,
+  Zap
 } from 'lucide-react';
 
 import { motion, AnimatePresence } from 'framer-motion';
@@ -85,8 +84,13 @@ const Sales: React.FC<SalesProps> = ({
   const [amountPaid, setAmountPaid] = useState(0);
   const [invoiceId, setInvoiceId] = useState('');
   const [showSuccessToast, setShowSuccessToast] = useState(false);
+  
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [selectedInvoiceForPrint, setSelectedInvoiceForPrint] = useState<string | null>(null);
+
+  const [isReturnModalOpen, setIsReturnModalOpen] = useState(false);
+  const [saleToReturn, setSaleToReturn] = useState<Sale | null>(null);
+  const [returnQty, setReturnQty] = useState(1);
 
   useEffect(() => {
     if (isSessionActive && !invoiceId) {
@@ -203,7 +207,7 @@ const Sales: React.FC<SalesProps> = ({
     if (!matchedProduct) return;
     
     if (quantity > matchedProduct.quantity) {
-      alert("Error: Insufficient stock for settlement.");
+      alert(`Error: Insufficient stock! Only ${matchedProduct.quantity} items left in inventory.`);
       return;
     }
 
@@ -241,21 +245,102 @@ const Sales: React.FC<SalesProps> = ({
     resetEntryForm();
   };
 
+  const getReturnableQty = (sale: Sale) => {
+    if (!sale) return 0;
+    const returns = sales.filter(s => s.invoiceId === `RET-${sale.invoiceId}` && s.productId === sale.productId);
+    const alreadyReturned = returns.reduce((acc, curr) => acc + Math.abs(curr.quantity), 0);
+    return sale.quantity - alreadyReturned;
+  };
+
+  const handleOpenReturn = (sale: Sale) => {
+    const maxQty = getReturnableQty(sale);
+    if (maxQty <= 0) {
+        alert('All items from this record have already been returned.');
+        return;
+    }
+    setSaleToReturn(sale);
+    setReturnQty(1);
+    setIsReturnModalOpen(true);
+  };
+
+  const handleReturnSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!saleToReturn) return;
+
+    const maxQty = getReturnableQty(saleToReturn);
+    if (returnQty <= 0 || returnQty > maxQty) {
+        alert(`Invalid return quantity. Maximum allowed is ${maxQty}.`);
+        return;
+    }
+
+    const effectiveUnitPrice = saleToReturn.totalPrice / saleToReturn.quantity;
+    const refundAmount = returnQty * effectiveUnitPrice;
+    
+    let cashRefund = 0;
+    let dueAdjustment = 0;
+
+    if (saleToReturn.customerId) {
+        const customer = customers.find(c => c.id === saleToReturn.customerId);
+        const currentDue = customer ? customer.totalDue : 0;
+        
+        if (currentDue > 0) {
+            if (refundAmount >= currentDue) {
+                dueAdjustment = currentDue;
+                cashRefund = refundAmount - currentDue;
+            } else {
+                dueAdjustment = refundAmount;
+                cashRefund = 0;
+            }
+        } else {
+            cashRefund = refundAmount;
+        }
+    } else {
+        cashRefund = refundAmount; 
+    }
+
+    const returnInvoiceId = `RET-${saleToReturn.invoiceId}`;
+    
+    onAddSale({
+        invoiceId: returnInvoiceId,
+        customerId: saleToReturn.customerId,
+        customerName: saleToReturn.customerName,
+        productId: saleToReturn.productId,
+        productName: `[RETURN] ${saleToReturn.productName}`,
+        quantity: -returnQty,
+        buyingPrice: saleToReturn.buyingPrice,
+        unitPrice: saleToReturn.unitPrice,
+        discount: saleToReturn.discount,
+        totalPrice: -refundAmount,
+        amountPaid: -cashRefund,
+        amountDue: -dueAdjustment,
+        storeId: currentStore.id
+    });
+
+    const product = products.find(p => p.id === saleToReturn.productId);
+    if (product) {
+        onUpdateStock(product.id, { quantity: product.quantity + returnQty });
+    }
+
+    if (dueAdjustment > 0 && saleToReturn.customerId) {
+        onUpdateCustomerDue(saleToReturn.customerId, -dueAdjustment);
+    }
+
+    alert(`Return processed successfully!\nStock restored: +${returnQty}\nDue Adjusted: $${dueAdjustment.toFixed(2)}\nCash Refund: $${cashRefund.toFixed(2)}`);
+    setIsReturnModalOpen(false);
+    setSaleToReturn(null);
+  };
+
   const handleLedgerQuantityChange = (sale: Sale, newQty: number) => {
     if (isNaN(newQty) || newQty < 1) return;
-    
     const product = products.find(p => p.id === sale.productId);
     if (!product) return;
-
     const diff = sale.quantity - newQty;
     if (diff < 0 && product.quantity < Math.abs(diff)) {
       alert("Insufficient inventory for adjustment.");
       return;
     }
-
     const currentEffectiveUnitPrice = sale.totalPrice / sale.quantity;
     const newTotal = newQty * currentEffectiveUnitPrice;
-
     onUpdateSale(sale.id, { quantity: newQty, totalPrice: newTotal });
     onUpdateStock(product.id, { quantity: product.quantity + diff });
   };
@@ -275,7 +360,7 @@ const Sales: React.FC<SalesProps> = ({
 
   const todayStats = useMemo(() => {
     const today = new Date().toISOString().split('T')[0];
-    const todaySales = sales.filter(s => s.storeId === currentStore.id && s.timestamp.startsWith(today));
+    const todaySales = sales.filter(s => s.storeId === currentStore.id && s.timestamp.startsWith(today) && !s.invoiceId?.startsWith('VOID-'));
     const todayExpenses = expenses.filter(e => e.storeId === currentStore.id && e.timestamp.startsWith(today));
     
     let totalSales = 0;
@@ -317,14 +402,16 @@ const Sales: React.FC<SalesProps> = ({
       .filter(s => s.storeId === currentStore.id)
       .map(s => {
         const isPayment = s.invoiceId?.startsWith('PAY-') || s.productId === 'PAYMENT_RECEIVED';
+        const isVoid = s.invoiceId?.startsWith('VOID-');
+        const isReturn = s.invoiceId?.startsWith('RET-');
         return [
           s.invoiceId,
           s.customerName,
           isPayment ? 'DUE COLLECTION' : s.productName,
-          isPayment ? '-' : s.quantity,
-          isPayment ? '-' : s.unitPrice.toFixed(2),
+          isPayment ? '-' : (isVoid ? '0' : s.quantity),
+          isPayment ? '-' : (isVoid ? '0.00' : s.unitPrice.toFixed(2)),
           isPayment ? '-' : s.discount + '%',
-          isPayment ? '-' : s.totalPrice.toFixed(2),
+          isPayment ? '-' : (isVoid ? '0.00' : s.totalPrice.toFixed(2)),
           (s.amountPaid || 0).toFixed(2),
           (s.amountDue || 0).toFixed(2),
           new Date(s.timestamp).toLocaleDateString()
@@ -348,6 +435,7 @@ const Sales: React.FC<SalesProps> = ({
     setShowPrintModal(true);
   };
 
+  // 🔴 LEDGER VIEW (ঐতিহাসিক সেলস) 🔴
   if (!isSessionActive) {
     const historicalSales = sales
       .filter(s => s.storeId === currentStore.id)
@@ -368,79 +456,40 @@ const Sales: React.FC<SalesProps> = ({
 
     return (
       <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-700">
+        {/* Header & Stats */}
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
           <div>
             <h1 className="text-3xl font-black text-white tracking-tight">Sales Operations</h1>
             <p className="text-slate-500 font-medium italic">General ledger for <span className="gold-gradient-text font-black">{currentStore.name}</span></p>
           </div>
           <div className="flex items-center gap-3">
-            <button 
-              onClick={exportToCSV}
-              className="p-4 bg-slate-900 border border-slate-800 text-slate-400 rounded-2xl hover:text-white transition-all shadow-xl"
-            >
-              <Download className="w-5 h-5" />
-            </button>
-            <button 
-              onClick={() => setIsSessionActive(true)}
-              className="bg-gradient-to-r from-amber-400 to-amber-600 text-slate-950 px-6 py-4 rounded-2xl font-black flex items-center gap-3 hover:scale-[1.02] transition-all shadow-xl shadow-amber-900/10 uppercase tracking-widest text-xs"
-            >
-              <ShoppingCart className="w-5 h-5 stroke-[3px]" />
-              Record New Sale
+            <button onClick={exportToCSV} className="p-4 bg-slate-900 border border-slate-800 text-slate-400 rounded-2xl hover:text-white transition-all shadow-xl"><Download className="w-5 h-5" /></button>
+            <button onClick={() => setIsSessionActive(true)} className="bg-gradient-to-r from-amber-400 to-amber-600 text-slate-950 px-6 py-4 rounded-2xl font-black flex items-center gap-3 hover:scale-[1.02] transition-all shadow-xl shadow-amber-900/10 uppercase tracking-widest text-xs">
+              <ShoppingCart className="w-5 h-5 stroke-[3px]" /> Record New Sale
             </button>
           </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
           <div className="bg-slate-900/50 backdrop-blur-md p-5 rounded-[2rem] border border-slate-800 shadow-xl flex items-center gap-4 group hover:border-slate-500/30 transition-all">
-            <div className="w-10 h-10 bg-slate-800 rounded-xl flex items-center justify-center text-slate-400 group-hover:scale-110 transition-transform">
-              <ShoppingCart className="w-5 h-5" />
-            </div>
-            <div>
-              <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Today's Sales</p>
-              <h3 className="text-lg font-black text-white tracking-tighter">${todayStats.totalSales.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
-            </div>
+            <div className="w-10 h-10 bg-slate-800 rounded-xl flex items-center justify-center text-slate-400 group-hover:scale-110 transition-transform"><ShoppingCart className="w-5 h-5" /></div>
+            <div><p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Today's Sales</p><h3 className="text-lg font-black text-white tracking-tighter">${todayStats.totalSales.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3></div>
           </div>
-
           <div className="bg-slate-900/50 backdrop-blur-md p-5 rounded-[2rem] border border-slate-800 shadow-xl flex items-center gap-4 group hover:border-amber-500/30 transition-all">
-            <div className="w-10 h-10 bg-amber-400/10 rounded-xl flex items-center justify-center text-amber-400 group-hover:scale-110 transition-transform">
-              <DollarSign className="w-5 h-5" />
-            </div>
-            <div>
-              <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Today's Cash</p>
-              <h3 className="text-lg font-black text-amber-400 tracking-tighter">${todayStats.todayCash.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
-            </div>
+            <div className="w-10 h-10 bg-amber-400/10 rounded-xl flex items-center justify-center text-amber-400 group-hover:scale-110 transition-transform"><DollarSign className="w-5 h-5" /></div>
+            <div><p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Today's Cash</p><h3 className="text-lg font-black text-amber-400 tracking-tighter">${todayStats.todayCash.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3></div>
           </div>
-
           <div className="bg-slate-900/50 backdrop-blur-md p-5 rounded-[2rem] border border-slate-800 shadow-xl flex items-center gap-4 group hover:border-emerald-500/30 transition-all">
-            <div className="w-10 h-10 bg-emerald-400/10 rounded-xl flex items-center justify-center text-emerald-400 group-hover:scale-110 transition-transform">
-              <TrendingUp className="w-5 h-5" />
-            </div>
-            <div>
-              <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Today's Profit</p>
-              <h3 className="text-lg font-black text-emerald-400 tracking-tighter">${todayStats.totalProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
-            </div>
+            <div className="w-10 h-10 bg-emerald-400/10 rounded-xl flex items-center justify-center text-emerald-400 group-hover:scale-110 transition-transform"><TrendingUp className="w-5 h-5" /></div>
+            <div><p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Today's Profit</p><h3 className="text-lg font-black text-emerald-400 tracking-tighter">${todayStats.totalProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3></div>
           </div>
-
           <div className="bg-slate-900/50 backdrop-blur-md p-5 rounded-[2rem] border border-slate-800 shadow-xl flex items-center gap-4 group hover:border-rose-500/30 transition-all">
-            <div className="w-10 h-10 bg-rose-400/10 rounded-xl flex items-center justify-center text-rose-400 group-hover:scale-110 transition-transform">
-              <Zap className="w-5 h-5" />
-            </div>
-            <div>
-              <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Today's Expense</p>
-              <h3 className="text-lg font-black text-rose-400 tracking-tighter">${todayStats.totalExpense.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
-            </div>
+            <div className="w-10 h-10 bg-rose-400/10 rounded-xl flex items-center justify-center text-rose-400 group-hover:scale-110 transition-transform"><Zap className="w-5 h-5" /></div>
+            <div><p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Today's Expense</p><h3 className="text-lg font-black text-rose-400 tracking-tighter">${todayStats.totalExpense.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3></div>
           </div>
-
           <div className="bg-slate-900/50 backdrop-blur-md p-5 rounded-[2rem] border border-slate-800 shadow-xl flex items-center gap-4 group hover:border-blue-500/30 transition-all">
-            <div className="w-10 h-10 bg-blue-400/10 rounded-xl flex items-center justify-center text-blue-400 group-hover:scale-110 transition-transform">
-              <LayoutDashboard className="w-5 h-5" />
-            </div>
-            <div>
-              <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Net Balance</p>
-              <h3 className={`text-lg font-black tracking-tighter ${todayStats.netBalance >= 0 ? 'text-blue-400' : 'text-rose-400'}`}>
-                ${todayStats.netBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </h3>
-            </div>
+            <div className="w-10 h-10 bg-blue-400/10 rounded-xl flex items-center justify-center text-blue-400 group-hover:scale-110 transition-transform"><LayoutDashboard className="w-5 h-5" /></div>
+            <div><p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Net Balance</p><h3 className={`text-lg font-black tracking-tighter ${todayStats.netBalance >= 0 ? 'text-blue-400' : 'text-rose-400'}`}>${todayStats.netBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3></div>
           </div>
         </div>
 
@@ -449,26 +498,11 @@ const Sales: React.FC<SalesProps> = ({
             <div className="flex flex-col lg:flex-row gap-4">
               <div className="flex-1 relative group">
                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-amber-400 transition-colors" />
-                <input 
-                  type="text" 
-                  placeholder="Query invoice, customer or item..." 
-                  className="w-full pl-12 pr-4 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 focus:border-amber-400 transition-all amber-glow" 
-                  value={searchTerm} 
-                  onChange={e => setSearchTerm(e.target.value)} 
-                />
+                <input type="text" placeholder="Query invoice, customer or item..." className="w-full pl-12 pr-4 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 focus:border-amber-400 transition-all amber-glow" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
               </div>
               <div className="relative flex items-center gap-2 bg-slate-800 border border-slate-700 rounded-2xl px-4 focus-within:border-amber-400 transition-colors">
-                <input 
-                  type="date" 
-                  className="bg-transparent py-4 outline-none text-xs font-bold text-slate-300 w-full" 
-                  value={filterDate} 
-                  onChange={e => setFilterDate(e.target.value)} 
-                />
-                {filterDate && (
-                  <button onClick={() => setFilterDate('')} className="p-1 text-slate-500 hover:text-rose-400">
-                    <X className="w-4 h-4" />
-                  </button>
-                )}
+                <input type="date" className="bg-transparent py-4 outline-none text-xs font-bold text-slate-300 w-full" value={filterDate} onChange={e => setFilterDate(e.target.value)} />
+                {filterDate && <button onClick={() => setFilterDate('')} className="p-1 text-slate-500 hover:text-rose-400"><X className="w-4 h-4" /></button>}
               </div>
             </div>
           </div>
@@ -489,107 +523,197 @@ const Sales: React.FC<SalesProps> = ({
               <tbody className="divide-y divide-slate-800/50">
                 {paginatedSales.map((sale) => {
                   const isPayment = sale.invoiceId?.startsWith('PAY-') || sale.productId === 'PAYMENT_RECEIVED';
+                  const isVoid = sale.invoiceId?.startsWith('VOID-');
+                  const isReturn = sale.invoiceId?.startsWith('RET-');
+
                   return (
-                    <tr key={sale.id} className="group hover:bg-slate-800/40 transition-all">
-                      <td className="px-6 py-5 font-bold text-slate-400 text-xs whitespace-nowrap">
-                        {new Date(sale.timestamp).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                    <tr key={sale.id} className={`group hover:bg-slate-800/40 transition-all ${isVoid ? 'opacity-50 grayscale' : ''} ${isReturn ? 'bg-orange-500/5 hover:bg-orange-500/10' : ''}`}>
+                      <td className="px-6 py-5 font-bold text-slate-400 text-xs whitespace-nowrap">{new Date(sale.timestamp).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+                      <td className="px-6 py-5 font-black text-xs tracking-tighter">
+                        {isVoid ? <span className="text-rose-500 line-through">{sale.invoiceId}</span> : 
+                         isReturn ? <span className="text-orange-400">{sale.invoiceId}</span> : 
+                         <span className="text-white">{sale.invoiceId}</span>}
                       </td>
-                      <td className="px-6 py-5 font-black text-white text-xs tracking-tighter">{sale.invoiceId}</td>
                       <td className="px-6 py-5 text-sm font-bold text-slate-300">{sale.customerName}</td>
                       <td className="px-6 py-5 text-sm text-slate-400">
-                        {isPayment ? (
-                          <span className="text-blue-400 italic font-bold">Due Collection</span>
-                        ) : (
-                          sale.productName
-                        )}
+                        {isPayment ? <span className="text-blue-400 italic font-bold">Due Collection</span> : isReturn ? <span className="text-orange-400 italic font-bold">{sale.productName}</span> : sale.productName}
                       </td>
-                      <td className="px-6 py-5 text-center font-black text-white text-sm">
-                        {isPayment ? '-' : sale.quantity}
-                      </td>
+                      <td className="px-6 py-5 text-center font-black text-white text-sm">{isPayment ? '-' : (isVoid ? '0' : sale.quantity)}</td>
                       <td className="px-6 py-5 text-right font-black text-sm">
-                        {isPayment ? (
-                          <span className="text-blue-400 bg-blue-500/10 px-3 py-1.5 rounded-xl text-[10px] uppercase tracking-widest">+ ${sale.amountPaid?.toFixed(2)}</span>
-                        ) : (
-                          <div className="text-emerald-400">
-                            <p>${sale.totalPrice.toFixed(2)}</p>
-                            {sale.amountDue > 0 && <p className="text-rose-400 text-[9px] uppercase tracking-tighter mt-1">Due: ${sale.amountDue.toFixed(2)}</p>}
-                          </div>
-                        )}
+                        {isVoid ? <span className="text-rose-500 bg-rose-500/10 px-3 py-1.5 rounded-xl text-[10px] uppercase tracking-widest border border-rose-500/20">VOIDED</span> : 
+                         isReturn ? <span className="text-orange-400 bg-orange-500/10 px-3 py-1.5 rounded-xl text-[10px] uppercase tracking-widest border border-orange-500/20">REFUND</span> : 
+                         isPayment ? <span className="text-blue-400 bg-blue-500/10 px-3 py-1.5 rounded-xl text-[10px] uppercase tracking-widest">+ ${sale.amountPaid?.toFixed(2)}</span> : 
+                         <div className="text-emerald-400"><p>${sale.totalPrice.toFixed(2)}</p>{sale.amountDue > 0 && <p className="text-rose-400 text-[9px] uppercase tracking-tighter mt-1">Due: ${sale.amountDue.toFixed(2)}</p>}</div>}
                       </td>
                       <td className="px-6 py-5 text-right">
                         <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                          {!isPayment && (
+                          {/* 🔴 Buttons (Visible in Ledger) 🔴 */}
+                          {!isPayment && !isVoid && !isReturn && (
+                            <button onClick={() => handleOpenReturn(sale)} title="Return Item" className="p-2 text-slate-600 hover:text-orange-400"><RotateCcw className="w-4 h-4" /></button>
+                          )}
+                          {!isPayment && !isVoid && !isReturn && (
                             <button onClick={() => handlePrint(sale.invoiceId)} className="p-2 text-slate-600 hover:text-amber-400"><Printer className="w-4 h-4" /></button>
                           )}
-                          {canDelete && (
-                            <button onClick={() => onDeleteSale(sale.id)} className="p-2 text-slate-600 hover:text-rose-500"><Trash2 className="w-4 h-4" /></button>
+                          {canDelete && !isVoid && !isReturn && (
+                            sale.amountPaid > 0 && !isPayment ? (
+                              <button title="Cannot void: Payment exists. Reverse payment first." className="p-2 text-slate-600 cursor-not-allowed opacity-50"><AlertOctagon className="w-4 h-4" /></button>
+                            ) : (
+                              <button onClick={() => onDeleteSale(sale.id)} className="p-2 text-slate-600 hover:text-rose-500"><Trash2 className="w-4 h-4" /></button>
+                            )
                           )}
                         </div>
                       </td>
                     </tr>
                   );
                 })}
-                {paginatedSales.length === 0 && (
-                  <tr>
-                    <td colSpan={7} className="px-6 py-20 text-center text-slate-500 text-xs font-bold uppercase tracking-widest opacity-50">
-                      No sales records found
-                    </td>
-                  </tr>
-                )}
+                {paginatedSales.length === 0 && <tr><td colSpan={7} className="px-6 py-20 text-center text-slate-500 text-xs font-bold uppercase tracking-widest opacity-50">No sales records found</td></tr>}
               </tbody>
             </table>
           </div>
           
           {totalPages > 0 && (
             <div className="p-4 border-t border-slate-800 bg-slate-900/50 flex flex-col sm:flex-row items-center justify-between gap-4">
-              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
-                Showing {((currentPage - 1) * ITEMS_PER_PAGE) + 1} to {Math.min(currentPage * ITEMS_PER_PAGE, historicalSales.length)} of {historicalSales.length} entries
-              </p>
+              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Showing {((currentPage - 1) * ITEMS_PER_PAGE) + 1} to {Math.min(currentPage * ITEMS_PER_PAGE, historicalSales.length)} of {historicalSales.length} entries</p>
               <div className="flex items-center gap-2">
-                <button 
-                  onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                  disabled={currentPage === 1}
-                  className="p-2 bg-slate-800 border border-slate-700 rounded-xl text-slate-400 disabled:opacity-30 hover:bg-slate-700 transition-colors"
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </button>
-                <div className="px-4 py-2 bg-amber-400/10 border border-amber-400/20 rounded-xl">
-                   <span className="text-[10px] font-black text-amber-400 uppercase tracking-widest">Page {currentPage} of {totalPages}</span>
-                </div>
-                <button 
-                  onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-                  disabled={currentPage === totalPages}
-                  className="p-2 bg-slate-800 border border-slate-700 rounded-xl text-slate-400 disabled:opacity-30 hover:bg-slate-700 transition-colors"
-                >
-                  <ChevronRight className="w-4 h-4" />
-                </button>
+                <button onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))} disabled={currentPage === 1} className="p-2 bg-slate-800 border border-slate-700 rounded-xl text-slate-400 disabled:opacity-30 hover:bg-slate-700 transition-colors"><ChevronLeft className="w-4 h-4" /></button>
+                <div className="px-4 py-2 bg-amber-400/10 border border-amber-400/20 rounded-xl"><span className="text-[10px] font-black text-amber-400 uppercase tracking-widest">Page {currentPage} of {totalPages}</span></div>
+                <button onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))} disabled={currentPage === totalPages} className="p-2 bg-slate-800 border border-slate-700 rounded-xl text-slate-400 disabled:opacity-30 hover:bg-slate-700 transition-colors"><ChevronRight className="w-4 h-4" /></button>
               </div>
             </div>
           )}
         </div>
+
+        {/* 🔴 Modals for Ledger View 🔴 */}
+        <AnimatePresence>
+          {isReturnModalOpen && saleToReturn && (
+            <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+              <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="bg-slate-900 w-full max-w-md rounded-[2.5rem] border border-slate-800 shadow-2xl p-8 relative">
+                 <button onClick={() => setIsReturnModalOpen(false)} className="absolute top-6 right-6 text-slate-500 hover:text-white"><X className="w-6 h-6" /></button>
+                 <h2 className="text-xl font-black text-white mb-2 flex items-center gap-2"><RotateCcw className="w-5 h-5 text-orange-500"/> Return Item</h2>
+                 <p className="text-xs text-slate-400 font-bold mb-6">Original Invoice: {saleToReturn.invoiceId}</p>
+
+                 <form onSubmit={handleReturnSubmit} className="space-y-6">
+                     <div className="bg-slate-800/50 p-4 rounded-2xl border border-slate-700/50 mb-6">
+                         <p className="text-sm font-bold text-white mb-1">{saleToReturn.productName}</p>
+                         <p className="text-xs text-slate-400">Unit Settlement: ${(saleToReturn.totalPrice / saleToReturn.quantity).toFixed(2)} / item</p>
+                     </div>
+
+                     <div className="space-y-2">
+                         <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2">Return Quantity</label>
+                         <input type="number" min="1" max={getReturnableQty(saleToReturn)} value={returnQty} onChange={e => setReturnQty(parseInt(e.target.value) || 1)} className="w-full px-5 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-orange-400 font-black focus:border-orange-500" />
+                         <p className="text-[10px] text-orange-500/80 font-bold text-right mr-2 mt-1">Max returnable: {getReturnableQty(saleToReturn)}</p>
+                     </div>
+
+                     <div className="bg-orange-500/10 border border-orange-500/20 p-4 rounded-2xl">
+                         <p className="text-[10px] font-black text-orange-500 uppercase tracking-widest mb-2">Refund Calculation</p>
+                         <div className="flex justify-between text-xs font-bold text-slate-300 mb-1">
+                             <span>Total Refund Value:</span><span>${(returnQty * (saleToReturn.totalPrice / saleToReturn.quantity)).toFixed(2)}</span>
+                         </div>
+                         <div className="flex justify-between text-xs font-bold text-slate-300">
+                             <span>Will Adjust Due First:</span><span className="text-emerald-400">Auto-calculated</span>
+                         </div>
+                     </div>
+
+                     <button type="submit" className="w-full bg-orange-500 text-white py-4 rounded-2xl font-black uppercase tracking-widest text-xs shadow-lg hover:bg-orange-600 transition-colors">Confirm Return</button>
+                 </form>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {showPrintModal && selectedInvoiceForPrint && (
+            <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 no-print">
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowPrintModal(false)} className="absolute inset-0 bg-slate-950/90 backdrop-blur-md" />
+              <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} className="relative w-full max-w-2xl bg-white text-slate-950 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+                <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                  <h3 className="font-black uppercase tracking-widest text-xs text-slate-500">Invoice Preview</h3>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => window.print()} className="bg-slate-950 text-white px-4 py-2 rounded-xl font-bold text-[10px] uppercase tracking-widest flex items-center gap-2 hover:bg-slate-800 transition-colors"><Printer className="w-4 h-4" /> Print</button>
+                    <button onClick={() => setShowPrintModal(false)} className="p-2 text-slate-400 hover:text-slate-600 transition-colors"><X className="w-5 h-5" /></button>
+                  </div>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-12 print-content" id="printable-invoice">
+                  <div className="flex justify-between items-start mb-12">
+                    <div>
+                      <h1 className="text-4xl font-black tracking-tighter mb-2">{currentStore.name}</h1>
+                      <p className="text-xs text-slate-500 font-bold uppercase tracking-widest">{currentStore.location}</p>
+                    </div>
+                    <div className="text-right">
+                      <h2 className="text-xl font-black uppercase tracking-tighter mb-1">Invoice</h2>
+                      <p className="text-xs font-bold text-slate-400">{selectedInvoiceForPrint}</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-12 mb-12">
+                    <div>
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Billed To</p>
+                      <p className="font-black text-lg">{sales.find(s => s.invoiceId === selectedInvoiceForPrint)?.customerName || 'Walk-in Customer'}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Date Issued</p>
+                      <p className="font-black text-lg">{new Date(sales.find(s => s.invoiceId === selectedInvoiceForPrint)?.timestamp || '').toLocaleDateString()}</p>
+                    </div>
+                  </div>
+
+                  <table className="w-full mb-12">
+                    <thead>
+                      <tr className="border-b-2 border-slate-950 text-[10px] font-black uppercase tracking-widest">
+                        <th className="py-4 text-left">Description</th><th className="py-4 text-center">Qty</th><th className="py-4 text-right">Unit</th><th className="py-4 text-right">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {sales.filter(s => s.invoiceId === selectedInvoiceForPrint).map(item => (
+                        <tr key={item.id}>
+                          <td className="py-4 font-bold">{item.productId === 'PAYMENT_RECEIVED' ? 'Due Collection' : item.productName}</td>
+                          <td className="py-4 text-center font-bold">{item.productId === 'PAYMENT_RECEIVED' ? '-' : item.quantity}</td>
+                          <td className="py-4 text-right font-bold">${item.unitPrice.toFixed(2)}</td>
+                          <td className="py-4 text-right font-black">${item.totalPrice.toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+
+                  <div className="flex justify-end">
+                    <div className="w-64 space-y-3">
+                      <div className="flex justify-between text-sm"><span className="text-slate-500 font-bold">Subtotal</span><span className="font-black">${sales.filter(s => s.invoiceId === selectedInvoiceForPrint).reduce((acc, curr) => acc + curr.totalPrice, 0).toFixed(2)}</span></div>
+                      <div className="flex justify-between text-sm"><span className="text-slate-500 font-bold">Amount Paid</span><span className="font-black text-emerald-600">${sales.filter(s => s.invoiceId === selectedInvoiceForPrint).reduce((acc, curr) => acc + (curr.amountPaid || 0), 0).toFixed(2)}</span></div>
+                      <div className="border-t-2 border-slate-950 pt-3 flex justify-between items-center"><span className="text-xs font-black uppercase tracking-widest">Balance Due</span><span className="text-2xl font-black">${sales.filter(s => s.invoiceId === selectedInvoiceForPrint).reduce((acc, curr) => acc + (curr.amountDue || 0), 0).toFixed(2)}</span></div>
+                    </div>
+                  </div>
+
+                  <div className="mt-20 pt-12 border-t border-slate-100 text-center">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em]">Thank you for your business</p>
+                  </div>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        <style>{`
+          @media print {
+            .no-print { display: none !important; }
+            .print-only { display: block !important; }
+            body { background: white !important; color: black !important; }
+          }
+        `}</style>
       </div>
     );
   }
 
+  // 🔴 ACTIVE SESSION VIEW (নতুন সেলস পেজ) 🔴
   return (
     <div className="h-[calc(100vh-140px)] flex flex-col lg:flex-row gap-8 animate-in fade-in zoom-in-95 duration-500 overflow-hidden">
       <div className="lg:w-[450px] flex flex-col bg-slate-900 border border-slate-800 rounded-[2.5rem] shadow-2xl p-8 overflow-y-auto custom-scrollbar relative">
         <div className="mb-6 flex items-center justify-between">
-          <div>
-            <h2 className="text-xl font-black text-white tracking-tight uppercase">New Sale Session</h2>
-            <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em]">{invoiceId}</p>
-          </div>
-          <div className="flex items-center gap-2 px-3 py-1 bg-amber-400/10 border border-amber-400/20 rounded-full">
-            <div className="w-2 h-2 bg-amber-400 rounded-full animate-pulse" />
-            <span className="text-[10px] font-black text-amber-400 uppercase tracking-widest">Active Entry</span>
-          </div>
+          <div><h2 className="text-xl font-black text-white tracking-tight uppercase">New Sale Session</h2><p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em]">{invoiceId}</p></div>
+          <div className="flex items-center gap-2 px-3 py-1 bg-amber-400/10 border border-amber-400/20 rounded-full"><div className="w-2 h-2 bg-amber-400 rounded-full animate-pulse" /><span className="text-[10px] font-black text-amber-400 uppercase tracking-widest">Active Entry</span></div>
         </div>
 
         {showSuccessToast && (
-          <div className="mb-6 bg-emerald-500/20 border border-emerald-500/30 p-4 rounded-2xl flex items-center gap-3 text-emerald-400 animate-in slide-in-from-top-2">
-            <Check className="w-5 h-5" />
-            <p className="text-xs font-black uppercase tracking-widest">Confirmed. Form blanked for next SKU.</p>
-          </div>
+          <div className="mb-6 bg-emerald-500/20 border border-emerald-500/30 p-4 rounded-2xl flex items-center gap-3 text-emerald-400 animate-in slide-in-from-top-2"><Check className="w-5 h-5" /><p className="text-xs font-black uppercase tracking-widest">Confirmed. Form blanked for next SKU.</p></div>
         )}
 
         <form onSubmit={handleSubmit} className="space-y-6 flex-1">
@@ -597,23 +721,8 @@ const Sales: React.FC<SalesProps> = ({
             <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2 text-amber-500">sku identifier</label>
             <div className="relative group">
               <ScanLine className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-amber-400 transition-colors" />
-              {/* 🔴 এখানে স্ক্যানারের Auto Enter বাটন ব্লক করা হয়েছে 🔴 */}
-              <input 
-                required 
-                value={skuId}
-                autoFocus
-                onChange={e => handleSkuLookup(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault(); 
-                  }
-                }}
-                placeholder="Search SKU..." 
-                className={`w-full pl-12 pr-14 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 amber-glow ${matchedProduct ? 'bg-slate-800/50 border-amber-400/30' : ''}`} 
-              />
-              {!isScanning && (
-                <button type="button" onClick={startScanner} className="absolute right-4 top-1/2 -translate-y-1/2 p-2 bg-slate-900 border border-slate-700 rounded-xl text-slate-400 hover:text-amber-400 transition-all"><ScanLine className="w-5 h-5" /></button>
-              )}
+              <input required value={skuId} autoFocus onChange={e => handleSkuLookup(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault(); }} placeholder="Search SKU..." className={`w-full pl-12 pr-14 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 amber-glow ${matchedProduct ? 'bg-slate-800/50 border-amber-400/30' : ''}`} />
+              {!isScanning && <button type="button" onClick={startScanner} className="absolute right-4 top-1/2 -translate-y-1/2 p-2 bg-slate-900 border border-slate-700 rounded-xl text-slate-400 hover:text-amber-400 transition-all"><ScanLine className="w-5 h-5" /></button>}
             </div>
           </div>
 
@@ -627,27 +736,12 @@ const Sales: React.FC<SalesProps> = ({
             </div>
           )}
 
-          {scannerError && (
-            <div className="bg-rose-500/10 border border-rose-500/20 p-4 rounded-2xl flex items-center gap-3 text-rose-400 text-xs font-bold">
-              <CameraOff className="w-4 h-4" />
-              <p>{scannerError}</p>
-            </div>
-          )}
+          {scannerError && <div className="bg-rose-500/10 border border-rose-500/20 p-4 rounded-2xl flex items-center gap-3 text-rose-400 text-xs font-bold"><CameraOff className="w-4 h-4" /><p>{scannerError}</p></div>}
 
           {matchedProduct && (
             <div className="grid grid-cols-1 gap-4 animate-in slide-in-from-top-2">
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Name</label>
-                <div className="w-full px-5 py-3.5 bg-slate-800/50 border border-slate-800 rounded-xl text-slate-400 font-bold text-xs truncate select-none italic">
-                  {matchedProduct.name}
-                </div>
-              </div>
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Category</label>
-                <div className="w-full px-5 py-3.5 bg-slate-800/50 border border-slate-800 rounded-xl text-slate-400 font-bold text-xs select-none italic">
-                  {matchedProduct.category}
-                </div>
-              </div>
+              <div className="space-y-2"><label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Name</label><div className="w-full px-5 py-3.5 bg-slate-800/50 border border-slate-800 rounded-xl text-slate-400 font-bold text-xs truncate select-none italic">{matchedProduct.name}</div></div>
+              <div className="space-y-2"><label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Category</label><div className="w-full px-5 py-3.5 bg-slate-800/50 border border-slate-800 rounded-xl text-slate-400 font-bold text-xs select-none italic">{matchedProduct.category}</div></div>
             </div>
           )}
 
@@ -655,19 +749,9 @@ const Sales: React.FC<SalesProps> = ({
             <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Customer Profile</label>
             <div className="relative group">
               <UserIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-amber-400 transition-colors" />
-              <select 
-                value={customerId}
-                onChange={e => {
-                  const cust = customers.find(c => c.id === e.target.value);
-                  setCustomerId(e.target.value);
-                  setCustomerName(cust ? cust.name : '');
-                }}
-                className="w-full pl-12 pr-4 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 appearance-none"
-              >
+              <select value={customerId} onChange={e => { const cust = customers.find(c => c.id === e.target.value); setCustomerId(e.target.value); setCustomerName(cust ? cust.name : ''); }} className="w-full pl-12 pr-4 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 appearance-none">
                 <option value="">Walk-in Customer</option>
-                {customers.filter(c => c.storeId === currentStore.id).map(c => (
-                  <option key={c.id} value={c.id}>{c.name} ({c.phone})</option>
-                ))}
+                {customers.filter(c => c.storeId === currentStore.id).map(c => <option key={c.id} value={c.id}>{c.name} ({c.phone})</option>)}
               </select>
             </div>
           </div>
@@ -677,29 +761,14 @@ const Sales: React.FC<SalesProps> = ({
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">volume (qty)</label>
               <div className="relative group">
                 <Hash className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-amber-400 transition-colors" />
-                <input 
-                  required 
-                  type="number" 
-                  min="1" 
-                  max={matchedProduct?.quantity || 1}
-                  value={quantity}
-                  onChange={e => setQuantity(parseInt(e.target.value) || 0)}
-                  className="w-full pl-12 pr-4 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-black focus:border-amber-400 amber-glow" 
-                />
+                <input required type="number" min="1" max={matchedProduct?.quantity || 1} value={quantity} onChange={e => setQuantity(parseInt(e.target.value) || 0)} className="w-full pl-12 pr-4 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-black focus:border-amber-400 amber-glow" />
               </div>
             </div>
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">selling price ($)</label>
               <div className="relative group">
                 <DollarSign className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-amber-400 transition-colors" />
-                <input 
-                  required 
-                  type="number" 
-                  step="0.01" 
-                  value={unitPrice}
-                  onChange={e => setUnitPrice(parseFloat(e.target.value) || 0)}
-                  className="w-full pl-12 pr-4 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-emerald-400 font-black focus:border-amber-400 amber-glow" 
-                />
+                <input required type="number" step="0.01" value={unitPrice} onChange={e => setUnitPrice(parseFloat(e.target.value) || 0)} className="w-full pl-12 pr-4 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-emerald-400 font-black focus:border-amber-400 amber-glow" />
               </div>
             </div>
           </div>
@@ -707,31 +776,13 @@ const Sales: React.FC<SalesProps> = ({
           <div className={`grid grid-cols-2 gap-4 transition-all duration-500 ${!matchedProduct ? 'opacity-30 pointer-events-none blur-[1px]' : ''}`}>
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">discount (%)</label>
-              <input 
-                type="number" 
-                min="0" 
-                max="100" 
-                value={discount}
-                onChange={e => setDiscount(parseFloat(e.target.value) || 0)}
-                className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-rose-500 font-black focus:border-amber-400 amber-glow" 
-              />
+              <input type="number" min="0" max="100" value={discount} onChange={e => setDiscount(parseFloat(e.target.value) || 0)} className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-rose-500 font-black focus:border-amber-400 amber-glow" />
             </div>
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">amount paid ($)</label>
               <div className="relative group">
                 <CreditCard className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-amber-400 transition-colors" />
-                <input 
-                  type="number" 
-                  step="0.01" 
-                  disabled={!customerId}
-                  value={!customerId ? totalAmount : amountPaid}
-                  onChange={e => setAmountPaid(parseFloat(e.target.value) || 0)}
-                  className={`w-full pl-12 pr-4 py-4 rounded-2xl outline-none font-black transition-all ${
-                    !customerId 
-                      ? 'bg-emerald-900/20 border border-emerald-500/30 text-emerald-500 cursor-not-allowed' 
-                      : 'bg-slate-800 border border-slate-700 text-amber-400 focus:border-amber-400 amber-glow'
-                  }`} 
-                />
+                <input type="number" step="0.01" disabled={!customerId} value={!customerId ? totalAmount : amountPaid} onChange={e => setAmountPaid(parseFloat(e.target.value) || 0)} className={`w-full pl-12 pr-4 py-4 rounded-2xl outline-none font-black transition-all ${!customerId ? 'bg-emerald-900/20 border border-emerald-500/30 text-emerald-500 cursor-not-allowed' : 'bg-slate-800 border border-slate-700 text-amber-400 focus:border-amber-400 amber-glow'}`} />
               </div>
             </div>
           </div>
@@ -744,220 +795,50 @@ const Sales: React.FC<SalesProps> = ({
           </div>
 
           <div className="pt-4 flex flex-col gap-3">
-            <button 
-              type="submit" 
-              disabled={!matchedProduct}
-              className={`w-full py-5 rounded-[2rem] font-black shadow-2xl transition-all flex items-center justify-center gap-3 uppercase tracking-widest text-xs ${matchedProduct ? 'bg-gradient-to-r from-amber-400 to-amber-600 text-slate-950 shadow-amber-900/20 hover:scale-[1.02]' : 'bg-slate-800 text-slate-500 cursor-not-allowed'}`}
-            >
-              confirm settlement <ArrowRight className="w-5 h-5" />
-            </button>
-            <button 
-              type="button" 
-              onClick={() => { setIsSessionActive(false); setInvoiceId(''); setCustomerName(''); resetEntryForm(); }}
-              className="w-full py-4 bg-slate-800 border border-slate-700 text-slate-400 rounded-[2rem] font-black hover:text-white transition-all text-[10px] uppercase tracking-[0.2em] shadow-xl"
-            >
-              complete
-            </button>
+            <button type="submit" disabled={!matchedProduct} className={`w-full py-5 rounded-[2rem] font-black shadow-2xl transition-all flex items-center justify-center gap-3 uppercase tracking-widest text-xs ${matchedProduct ? 'bg-gradient-to-r from-amber-400 to-amber-600 text-slate-950 shadow-amber-900/20 hover:scale-[1.02]' : 'bg-slate-800 text-slate-500 cursor-not-allowed'}`}>confirm settlement <ArrowRight className="w-5 h-5" /></button>
+            <button type="button" onClick={() => { setIsSessionActive(false); setInvoiceId(''); setCustomerName(''); resetEntryForm(); }} className="w-full py-4 bg-slate-800 border border-slate-700 text-slate-400 rounded-[2rem] font-black hover:text-white transition-all text-[10px] uppercase tracking-[0.2em] shadow-xl">complete</button>
           </div>
         </form>
       </div>
 
       <div className="flex-1 flex flex-col bg-slate-900/50 backdrop-blur-md border border-slate-800 rounded-[2.5rem] shadow-2xl overflow-hidden">
         <div className="p-8 border-b border-slate-800 flex items-center justify-between">
-           <div>
-              <h2 className="text-xl font-black text-white tracking-tight uppercase">Live Sales Ledger</h2>
-              <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em]">Active Session Tracking</p>
-           </div>
-           <div className="p-3 bg-slate-800 rounded-2xl text-amber-500 border border-slate-700 shadow-xl">
-              <History className="w-5 h-5" />
-           </div>
+           <div><h2 className="text-xl font-black text-white tracking-tight uppercase">Live Sales Ledger</h2><p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em]">Active Session Tracking</p></div>
+           <div className="p-3 bg-slate-800 rounded-2xl text-amber-500 border border-slate-700 shadow-xl"><History className="w-5 h-5" /></div>
         </div>
 
         <div className="flex-1 overflow-y-auto custom-scrollbar">
            <table className="w-full text-left">
               <thead className="sticky top-0 bg-slate-900 z-10">
                 <tr className="text-[10px] font-black text-slate-500 uppercase tracking-widest border-b border-slate-800">
-                  <th className="px-6 py-5">Item</th>
-                  <th className="px-6 py-5 text-center">Vol (Qty)</th>
-                  <th className="px-6 py-5 text-right">Settlement ($)</th>
+                  <th className="px-6 py-5">Item</th><th className="px-6 py-5 text-center">Vol (Qty)</th><th className="px-6 py-5 text-right">Settlement ($)</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/50">
                 {sessionSales.map((sale) => (
                     <tr key={sale.id} className="group hover:bg-slate-800/40 transition-all animate-in slide-in-from-right-4 duration-300">
-                      <td className="px-6 py-5">
-                        <p className="font-bold text-white text-sm truncate max-w-[180px]">{sale.productName}</p>
-                        <p className="text-[10px] text-slate-500 font-bold uppercase tracking-tighter italic">{sale.customerName}</p>
-                      </td>
-                      <td className="px-6 py-5 text-center">
-                        <input 
-                          type="number"
-                          min="1"
-                          value={sale.quantity}
-                          onChange={(e) => handleLedgerQuantityChange(sale, parseInt(e.target.value))}
-                          className="w-20 bg-slate-800 border border-slate-700 rounded-xl text-center font-black text-amber-400 text-sm focus:border-amber-400 outline-none p-1.5 shadow-inner"
-                        />
-                      </td>
-                      <td className="px-6 py-5 text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <span className="text-emerald-400 text-xs font-bold">$</span>
-                          <input 
-                            type="number"
-                            step="0.01"
-                            value={sale.totalPrice}
-                            onChange={(e) => handleLedgerTotalChange(sale, parseFloat(e.target.value))}
-                            className="w-28 bg-slate-800 border border-slate-700 rounded-xl text-right font-black text-emerald-400 text-sm focus:border-emerald-400 outline-none p-1.5 shadow-inner"
-                          />
-                        </div>
-                      </td>
+                      <td className="px-6 py-5"><p className="font-bold text-white text-sm truncate max-w-[180px]">{sale.productName}</p><p className="text-[10px] text-slate-500 font-bold uppercase tracking-tighter italic">{sale.customerName}</p></td>
+                      <td className="px-6 py-5 text-center"><input type="number" min="1" value={sale.quantity} onChange={(e) => handleLedgerQuantityChange(sale, parseInt(e.target.value))} className="w-20 bg-slate-800 border border-slate-700 rounded-xl text-center font-black text-amber-400 text-sm focus:border-amber-400 outline-none p-1.5 shadow-inner" /></td>
+                      <td className="px-6 py-5 text-right"><div className="flex items-center justify-end gap-1"><span className="text-emerald-400 text-xs font-bold">$</span><input type="number" step="0.01" value={sale.totalPrice} onChange={(e) => handleLedgerTotalChange(sale, parseFloat(e.target.value))} className="w-28 bg-slate-800 border border-slate-700 rounded-xl text-right font-black text-emerald-400 text-sm focus:border-emerald-400 outline-none p-1.5 shadow-inner" /></div></td>
                     </tr>
                 ))}
-                {sessionSales.length === 0 && (
-                  <tr>
-                    <td colSpan={3} className="px-6 py-20 text-center opacity-30 grayscale">
-                       <LayoutDashboard className="w-12 h-12 mx-auto text-slate-600 mb-4" />
-                       <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Awaiting session confirm</p>
-                    </td>
-                  </tr>
-                )}
+                {sessionSales.length === 0 && <tr><td colSpan={3} className="px-6 py-20 text-center opacity-30 grayscale"><LayoutDashboard className="w-12 h-12 mx-auto text-slate-600 mb-4" /><p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Awaiting session confirm</p></td></tr>}
               </tbody>
            </table>
         </div>
         
         <div className="p-8 bg-slate-950 border-t border-slate-800">
            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Total Turnover</p>
-                <p className="text-2xl font-black text-white">${totalTurnover.toFixed(2)}</p>
-              </div>
-              <div className="flex flex-col items-end">
-                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Items Settled</p>
-                <p className="text-2xl font-black text-amber-400">{sessionSales.length}</p>
-              </div>
+              <div><p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Total Turnover</p><p className="text-2xl font-black text-white">${totalTurnover.toFixed(2)}</p></div>
+              <div className="flex flex-col items-end"><p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Items Settled</p><p className="text-2xl font-black text-amber-400">{sessionSales.length}</p></div>
            </div>
         </div>
       </div>
 
       <style>{`
-        @keyframes scan {
-          0% { top: 10%; opacity: 0; }
-          20% { opacity: 1; }
-          80% { opacity: 1; }
-          100% { top: 90%; opacity: 0; }
-        }
-        .animate-scan {
-          animation: scan 1.5s ease-in-out infinite;
-        }
-        @media print {
-          .no-print { display: none !important; }
-          .print-only { display: block !important; }
-          body { background: white !important; color: black !important; }
-        }
+        @keyframes scan { 0% { top: 10%; opacity: 0; } 20% { opacity: 1; } 80% { opacity: 1; } 100% { top: 90%; opacity: 0; } }
+        .animate-scan { animation: scan 1.5s ease-in-out infinite; }
       `}</style>
-
-      <AnimatePresence>
-        {showPrintModal && selectedInvoiceForPrint && (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 no-print">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setShowPrintModal(false)}
-              className="absolute inset-0 bg-slate-950/90 backdrop-blur-md"
-            />
-            <motion.div 
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="relative w-full max-w-2xl bg-white text-slate-950 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
-            >
-              <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50">
-                <h3 className="font-black uppercase tracking-widest text-xs text-slate-500">Invoice Preview</h3>
-                <div className="flex items-center gap-2">
-                  <button 
-                    onClick={() => window.print()}
-                    className="bg-slate-950 text-white px-4 py-2 rounded-xl font-bold text-[10px] uppercase tracking-widest flex items-center gap-2 hover:bg-slate-800 transition-colors"
-                  >
-                    <Printer className="w-4 h-4" /> Print
-                  </button>
-                  <button 
-                    onClick={() => setShowPrintModal(false)}
-                    className="p-2 text-slate-400 hover:text-slate-600 transition-colors"
-                  >
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
-              </div>
-
-              <div className="flex-1 overflow-y-auto p-12 print-content" id="printable-invoice">
-                <div className="flex justify-between items-start mb-12">
-                  <div>
-                    <h1 className="text-4xl font-black tracking-tighter mb-2">{currentStore.name}</h1>
-                    <p className="text-xs text-slate-500 font-bold uppercase tracking-widest">{currentStore.location}</p>
-                  </div>
-                  <div className="text-right">
-                    <h2 className="text-xl font-black uppercase tracking-tighter mb-1">Invoice</h2>
-                    <p className="text-xs font-bold text-slate-400">{selectedInvoiceForPrint}</p>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-12 mb-12">
-                  <div>
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Billed To</p>
-                    <p className="font-black text-lg">{sales.find(s => s.invoiceId === selectedInvoiceForPrint)?.customerName || 'Walk-in Customer'}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Date Issued</p>
-                    <p className="font-black text-lg">{new Date(sales.find(s => s.invoiceId === selectedInvoiceForPrint)?.timestamp || '').toLocaleDateString()}</p>
-                  </div>
-                </div>
-
-                <table className="w-full mb-12">
-                  <thead>
-                    <tr className="border-b-2 border-slate-950 text-[10px] font-black uppercase tracking-widest">
-                      <th className="py-4 text-left">Description</th>
-                      <th className="py-4 text-center">Qty</th>
-                      <th className="py-4 text-right">Unit</th>
-                      <th className="py-4 text-right">Total</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {sales.filter(s => s.invoiceId === selectedInvoiceForPrint).map(item => (
-                      <tr key={item.id}>
-                        <td className="py-4 font-bold">{item.productId === 'PAYMENT_RECEIVED' ? 'Due Collection' : item.productName}</td>
-                        <td className="py-4 text-center font-bold">{item.productId === 'PAYMENT_RECEIVED' ? '-' : item.quantity}</td>
-                        <td className="py-4 text-right font-bold">${item.unitPrice.toFixed(2)}</td>
-                        <td className="py-4 text-right font-black">${item.totalPrice.toFixed(2)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-
-                <div className="flex justify-end">
-                  <div className="w-64 space-y-3">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-slate-500 font-bold">Subtotal</span>
-                      <span className="font-black">${sales.filter(s => s.invoiceId === selectedInvoiceForPrint).reduce((acc, curr) => acc + curr.totalPrice, 0).toFixed(2)}</span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-slate-500 font-bold">Amount Paid</span>
-                      <span className="font-black text-emerald-600">${sales.filter(s => s.invoiceId === selectedInvoiceForPrint).reduce((acc, curr) => acc + (curr.amountPaid || 0), 0).toFixed(2)}</span>
-                    </div>
-                    <div className="border-t-2 border-slate-950 pt-3 flex justify-between items-center">
-                      <span className="text-xs font-black uppercase tracking-widest">Balance Due</span>
-                      <span className="text-2xl font-black">${sales.filter(s => s.invoiceId === selectedInvoiceForPrint).reduce((acc, curr) => acc + (curr.amountDue || 0), 0).toFixed(2)}</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-20 pt-12 border-t border-slate-100 text-center">
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em]">Thank you for your business</p>
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
     </div>
   );
 };

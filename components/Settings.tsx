@@ -3,7 +3,7 @@ import { Store, User, StorePayment } from '../types';
 import { supabase } from '../lib/supabase';
 import { 
   Settings as SettingsIcon, Store as StoreIcon, CreditCard, Lock, Plus, 
-  Trash2, Edit2, X, AlertCircle, CheckCircle2, CalendarClock, Clock, RefreshCw 
+  Trash2, Edit2, X, AlertCircle, CheckCircle2, CalendarClock, Clock, RefreshCw, Download, Upload 
 } from 'lucide-react';
 
 interface SettingsProps {
@@ -16,16 +16,19 @@ interface SettingsProps {
   setCurrentUser: React.Dispatch<React.SetStateAction<User | null>>;
   setCurrentStore: React.Dispatch<React.SetStateAction<Store | null>>;
   onDeleteStore: (id: string) => void | Promise<void>;
+  onDownloadBackup: (storeId: string, storeName: string) => Promise<void>;
+  onRestoreBackup: (storeId: string, storeName: string, file: File) => Promise<void>;
   canEditStores: boolean;
 }
 
-const Settings: React.FC<SettingsProps> = ({ stores, currentUser, setStores, setCurrentUser, onDeleteStore, canEditStores }) => {
+const Settings: React.FC<SettingsProps> = ({ stores, currentUser, setStores, setCurrentUser, onDeleteStore, onDownloadBackup, onRestoreBackup, canEditStores }) => {
   const [activeTab, setActiveTab] = useState<'hubs' | 'billing' | 'security'>('hubs');
   const [isStoreModalOpen, setIsStoreModalOpen] = useState(false);
   const [editingStore, setEditingStore] = useState<Store | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [payments, setPayments] = useState<any[]>([]);
+  const [backingUpStoreId, setBackingUpStoreId] = useState<string | null>(null);
 
   const [passwordData, setPasswordData] = useState({ current: '', new: '', confirm: '' });
   const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
@@ -53,7 +56,6 @@ const Settings: React.FC<SettingsProps> = ({ stores, currentUser, setStores, set
     setIsLoading(true);
     const form = e.target as HTMLFormElement;
     
-    // 🔴 নতুন Billing Start Month ফিল্ড যুক্ত করা হলো 🔴
     const storePayload = {
       name: form.storeName.value,
       location: form.storeLocation.value,
@@ -83,6 +85,29 @@ const Settings: React.FC<SettingsProps> = ({ stores, currentUser, setStores, set
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // 🔴 Download Confirmation 🔴
+  const handleDownloadClick = async (storeId: string, storeName: string) => {
+    if(window.confirm(`আপনি কি "${storeName}" এর ডেটা ডাউনলোড (Backup) করতে চান?`)) {
+      setBackingUpStoreId(storeId);
+      await onDownloadBackup(storeId, storeName);
+      setBackingUpStoreId(null);
+    }
+  };
+
+  // 🔴 Upload Confirmation & Trigger 🔴
+  const handleUploadClick = (storeId: string, storeName: string) => {
+    if(window.confirm(`⚠️ সতর্কতা! আপনি "${storeName}" স্টোরের আগের ডেটা রিস্টোর (Upload) করতে যাচ্ছেন।\n\nএতে করে বর্তমান ইনভেন্টরি, কাস্টমার এবং সাপ্লায়ারের বর্তমান ডেটা ওভাররাইট হয়ে যাবে। আপনি কি নিশ্চিত?`)) {
+        document.getElementById(`backup-upload-${storeId}`)?.click();
+    }
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>, storeId: string, storeName: string) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await onRestoreBackup(storeId, storeName, file);
+    e.target.value = ''; // Reset file input
   };
 
   const handleApprovePayment = async (paymentId: string) => {
@@ -122,7 +147,6 @@ const Settings: React.FC<SettingsProps> = ({ stores, currentUser, setStores, set
     }
   };
 
-  // অ্যাডমিন প্যানেলে শুধুমাত্র Pending পেমেন্টগুলো দেখাবো
   const pendingPayments = payments.filter(p => p.status === 'PENDING');
 
   return (
@@ -138,7 +162,6 @@ const Settings: React.FC<SettingsProps> = ({ stores, currentUser, setStores, set
         <button onClick={() => setActiveTab('security')} className={`px-6 py-3 rounded-2xl font-black text-xs uppercase tracking-widest ${activeTab === 'security' ? 'bg-amber-400 text-slate-950 shadow-xl' : 'bg-slate-900 text-slate-500'}`}><div className="flex items-center gap-2"><Lock className="w-4 h-4" /> Security</div></button>
       </div>
 
-      {/* --- STORE HUBS TAB --- */}
       {activeTab === 'hubs' && (
         <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 shadow-2xl">
           <div className="flex justify-between items-center mb-8">
@@ -167,6 +190,19 @@ const Settings: React.FC<SettingsProps> = ({ stores, currentUser, setStores, set
                 </div>
                 {canEditStores && (
                   <div className="flex justify-end gap-2 pt-4 border-t border-slate-700/50">
+                    
+                    {/* 🔴 Download Backup Button 🔴 */}
+                    <button onClick={() => handleDownloadClick(store.id, store.name)} disabled={backingUpStoreId === store.id} title={`Download Backup for ${store.name}`} className="p-2 text-slate-400 hover:text-emerald-400 transition-colors">
+                      {backingUpStoreId === store.id ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                    </button>
+
+                    {/* 🔴 Upload Backup Button 🔴 */}
+                    <button onClick={() => handleUploadClick(store.id, store.name)} title={`Restore Backup to ${store.name}`} className="p-2 text-slate-400 hover:text-blue-400 transition-colors">
+                      <Upload className="w-4 h-4" />
+                    </button>
+                    {/* 🔴 Hidden File Input for Upload 🔴 */}
+                    <input type="file" id={`backup-upload-${store.id}`} accept=".json" className="hidden" onChange={(e) => handleFileChange(e, store.id, store.name)} />
+
                     <button onClick={() => { setEditingStore(store); setIsStoreModalOpen(true); }} className="p-2 text-slate-400 hover:text-amber-400 transition-colors"><Edit2 className="w-4 h-4" /></button>
                     <button onClick={() => onDeleteStore(store.id)} className="p-2 text-slate-400 hover:text-rose-500 transition-colors"><Trash2 className="w-4 h-4" /></button>
                   </div>
@@ -177,55 +213,96 @@ const Settings: React.FC<SettingsProps> = ({ stores, currentUser, setStores, set
         </div>
       )}
 
-      {/* --- BILLING REQUESTS TAB --- */}
       {activeTab === 'billing' && (
-        <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 shadow-2xl">
-          <div className="flex items-center justify-between mb-8">
-             <div className="flex items-center gap-3"><CalendarClock className="w-6 h-6 text-amber-500" /><h2 className="text-xl font-black text-white uppercase tracking-widest">Payment Verification</h2></div>
-             <button onClick={fetchPayments} disabled={isSyncing} className="bg-slate-800 text-amber-400 px-4 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 border border-slate-700">
-               <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin' : ''}`} /> Sync Data
-             </button>
+        <div className="space-y-6">
+          <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 shadow-2xl">
+            <div className="flex items-center justify-between mb-8">
+               <div className="flex items-center gap-3"><CalendarClock className="w-6 h-6 text-amber-500" /><h2 className="text-xl font-black text-white uppercase tracking-widest">Pending Approvals</h2></div>
+               <button onClick={fetchPayments} disabled={isSyncing} className="bg-slate-800 text-amber-400 px-4 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 border border-slate-700">
+                 <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin' : ''}`} /> Sync Data
+               </button>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="text-[10px] font-black text-slate-500 uppercase tracking-widest border-b border-slate-800">
+                    <th className="px-6 py-5">Store Name</th>
+                    <th className="px-6 py-5 text-center">Month</th>
+                    <th className="px-6 py-5 text-center">Amount</th>
+                    <th className="px-6 py-5 text-center">TrxID</th>
+                    <th className="px-6 py-5 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/50">
+                  {pendingPayments.map(payment => {
+                    const store = stores.find(s => s.id === payment.storeId);
+                    return (
+                      <tr key={payment.id} className="hover:bg-slate-800/20 transition-colors">
+                        <td className="px-6 py-5 font-bold text-white text-sm">{store?.name || 'Unknown Store'}</td>
+                        <td className="px-6 py-5 text-center font-black text-amber-400 uppercase tracking-widest text-[10px]">{new Date(payment.monthYear + "-01").toLocaleString('default', { month: 'short', year: 'numeric' })}</td>
+                        <td className="px-6 py-5 text-center font-black text-slate-300">${payment.amountPaid}</td>
+                        <td className="px-6 py-5 text-center font-black text-emerald-400 tracking-widest">{payment.trxId}</td>
+                        <td className="px-6 py-5 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <button onClick={() => handleApprovePayment(payment.id)} className="bg-emerald-500 text-slate-950 px-4 py-2 rounded-xl text-[10px] font-black uppercase shadow-lg">Approve</button>
+                            <button onClick={() => handleRejectPayment(payment.id)} className="bg-rose-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase shadow-lg">Reject</button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {pendingPayments.length === 0 && (
+                    <tr><td colSpan={5} className="px-6 py-10 text-center text-slate-500 font-bold uppercase tracking-widest text-[10px]">No pending payment requests</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left">
-              <thead>
-                <tr className="text-[10px] font-black text-slate-500 uppercase tracking-widest border-b border-slate-800">
-                  <th className="px-6 py-5">Store Name</th>
-                  <th className="px-6 py-5 text-center">Month</th>
-                  <th className="px-6 py-5 text-center">Amount</th>
-                  <th className="px-6 py-5 text-center">TrxID</th>
-                  <th className="px-6 py-5 text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800/50">
-                {pendingPayments.map(payment => {
-                  const store = stores.find(s => s.id === payment.storeId);
-                  return (
-                    <tr key={payment.id} className="hover:bg-slate-800/20 transition-colors">
-                      <td className="px-6 py-5 font-bold text-white text-sm">{store?.name || 'Unknown Store'}</td>
-                      <td className="px-6 py-5 text-center font-black text-amber-400 uppercase tracking-widest text-[10px]">{new Date(payment.monthYear + "-01").toLocaleString('default', { month: 'short', year: 'numeric' })}</td>
-                      <td className="px-6 py-5 text-center font-black text-slate-300">${payment.amountPaid}</td>
-                      <td className="px-6 py-5 text-center font-black text-emerald-400 tracking-widest">{payment.trxId}</td>
-                      <td className="px-6 py-5 text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          <button onClick={() => handleApprovePayment(payment.id)} className="bg-emerald-500 text-slate-950 px-4 py-2 rounded-xl text-[10px] font-black uppercase shadow-lg">Approve</button>
-                          <button onClick={() => handleRejectPayment(payment.id)} className="bg-rose-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase shadow-lg">Reject</button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-                {pendingPayments.length === 0 && (
-                  <tr><td colSpan={5} className="px-6 py-10 text-center text-slate-500 font-bold uppercase tracking-widest text-[10px]">No pending payment requests</td></tr>
-                )}
-              </tbody>
-            </table>
+          <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 shadow-2xl">
+            <div className="flex items-center gap-3 mb-8">
+              <StoreIcon className="w-6 h-6 text-blue-400" />
+              <h2 className="text-xl font-black text-white uppercase tracking-widest">
+                Store Status ({new Date(currentMonthYear + "-01").toLocaleString('en-GB', { month: 'long', year: 'numeric' })})
+              </h2>
+            </div>
+            
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="text-[10px] font-black text-slate-500 uppercase tracking-widest border-b border-slate-800">
+                    <th className="px-6 py-5">Store Name</th>
+                    <th className="px-6 py-5 text-center">Monthly Fee</th>
+                    <th className="px-6 py-5 text-center">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/50">
+                  {stores.map(store => {
+                    const storePayments = payments.filter(p => p.storeId === store.id && p.monthYear === currentMonthYear);
+                    const isPaid = storePayments.some(p => p.status === 'PAID');
+                    const isPending = storePayments.some(p => p.status === 'PENDING');
+                    const status = isPaid ? 'PAID' : (isPending ? 'PENDING' : 'DUE');
+                    
+                    return (
+                      <tr key={store.id} className="hover:bg-slate-800/20 transition-colors">
+                        <td className="px-6 py-5 font-bold text-white text-sm">{store.name}</td>
+                        <td className="px-6 py-5 text-center font-black text-slate-300">${store.monthlyFee || 0}</td>
+                        <td className="px-6 py-5 text-center">
+                           {status === 'PAID' && <span className="bg-emerald-500/20 text-emerald-400 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest border border-emerald-500/30 inline-block w-24">PAID</span>}
+                           {status === 'PENDING' && <span className="bg-amber-400/20 text-amber-400 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest border border-amber-400/30 inline-block w-24">PENDING</span>}
+                           {status === 'DUE' && <span className="bg-rose-500/20 text-rose-500 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest border border-rose-500/30 inline-block w-24">DUE</span>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
 
-      {/* --- SECURITY TAB --- */}
       {activeTab === 'security' && (
         <div className="bg-slate-900/50 backdrop-blur-md p-8 rounded-[2.5rem] border border-slate-800 shadow-2xl max-w-2xl">
           <div className="flex items-center gap-3 mb-8">
@@ -254,7 +331,6 @@ const Settings: React.FC<SettingsProps> = ({ stores, currentUser, setStores, set
                 <div className="space-y-2"><label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2">Store Name</label><input name="storeName" required defaultValue={editingStore?.name} className="w-full px-5 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 amber-glow" /></div>
                 <div className="space-y-2"><label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2">Location</label><input name="storeLocation" required defaultValue={editingStore?.location} className="w-full px-5 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 amber-glow" /></div>
                 
-                {/* 🔴 Billing Start Month Field 🔴 */}
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2">Billing Start Month</label>
                   <input name="billingStartMonth" type="month" required defaultValue={editingStore?.billingStartMonth || currentMonthYear} className="w-full px-5 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-emerald-400 font-black focus:border-amber-400 amber-glow" />

@@ -1,7 +1,8 @@
 export enum UserRole {
   SUPER_ADMIN = 'SUPER_ADMIN',
   MANAGER = 'MANAGER',
-  SALESMAN = 'SALESMAN'
+  SALESMAN = 'SALESMAN' ,
+  STORE_OWNER = 'STORE_OWNER'
 }
 
 export interface UserPermissions {
