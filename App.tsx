@@ -1,20 +1,22 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, Suspense, lazy } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { supabase } from './lib/supabase';
 import Layout from './components/Layout';
-import Dashboard from './components/Dashboard';
-import Inventory from './components/Inventory';
-import Sales from './components/Sales';
-import Expenses from './components/Expenses';
-import Users from './components/Users';
-import Customers from './components/Customers';
-import Suppliers from './components/Suppliers';
-import Purchases from './components/Purchases';
-import Wastage from './components/Wastage';
-import Scanner from './components/Scanner';
-import Settings from './components/Settings';
 import Login from './components/Login';
 import { Store, Product, User, UserRole, Sale, Expense, Customer, Supplier, Purchase, UserPermissions } from './types';
+
+// 🔴 Lazy Loading Imports (পেজগুলোকে ফাস্ট লোড করার জন্য) 🔴
+const Dashboard = lazy(() => import('./components/Dashboard'));
+const Inventory = lazy(() => import('./components/Inventory'));
+const Sales = lazy(() => import('./components/Sales'));
+const Expenses = lazy(() => import('./components/Expenses'));
+const Users = lazy(() => import('./components/Users'));
+const Customers = lazy(() => import('./components/Customers'));
+const Suppliers = lazy(() => import('./components/Suppliers'));
+const Purchases = lazy(() => import('./components/Purchases'));
+const Wastage = lazy(() => import('./components/Wastage'));
+const Scanner = lazy(() => import('./components/Scanner'));
+const Settings = lazy(() => import('./components/Settings'));
 
 const App: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => localStorage.getItem('omni_auth') === 'true');
@@ -32,7 +34,10 @@ const App: React.FC = () => {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
+  
+  // 🔴 Loading States 🔴
   const [isDataLoading, setIsDataLoading] = useState(false);
+  const [isInitialFetchDone, setIsInitialFetchDone] = useState(false);
 
   const [activities, setActivities] = useState<any[]>(() => {
     const saved = localStorage.getItem('omni_activities');
@@ -73,56 +78,82 @@ const App: React.FC = () => {
     setUsers([]);
   }, []);
 
+  // 🔴 Initial Metadata Fetch Logic 🔴
   useEffect(() => {
     if (!isAuthenticated || !currentUser) return;
     const fetchInitialMetadata = async () => {
       let storeQuery = supabase.from('stores').select('*');
+      
       if (currentUser.role !== UserRole.SUPER_ADMIN) {
-        if (!currentUser.assignedStoreId) return setStores([]);
+        if (!currentUser.assignedStoreId) {
+           setStores([]);
+           setIsInitialFetchDone(true);
+           return; 
+        }
         storeQuery = storeQuery.eq('id', currentUser.assignedStoreId);
       }
+
       const { data: storesData } = await storeQuery;
+      
       if (storesData && storesData.length > 0) {
         setStores(storesData);
-        if (!currentStore || !storesData.find(s => s.id === currentStore.id)) setCurrentStore(storesData[0]);
+        if (!currentStore || !storesData.find(s => s.id === currentStore.id)) {
+          setCurrentStore(storesData[0]);
+        }
       }
+      
       let userQuery = supabase.from('users').select('*');
-      if (currentUser.role !== UserRole.SUPER_ADMIN) userQuery = userQuery.eq('assignedStoreId', currentUser.assignedStoreId);
+      if (currentUser.role !== UserRole.SUPER_ADMIN) {
+        userQuery = userQuery.eq('assignedStoreId', currentUser.assignedStoreId);
+      }
       const { data: usersData } = await userQuery;
       if (usersData) setUsers(usersData);
+
+      setIsInitialFetchDone(true);
     };
     fetchInitialMetadata();
   }, [isAuthenticated, currentUser?.id, currentUser?.assignedStoreId]);
 
+  // 🔴 Store Data Fetching with Try/Catch 🔴
   useEffect(() => {
     if (!isAuthenticated || !currentUser || !currentStore?.id) return;
     if (currentUser.role !== UserRole.SUPER_ADMIN && currentUser.assignedStoreId !== currentStore.id) {
       resetAllData();
       return; 
     }
+    
     const fetchStoreData = async () => {
       setIsDataLoading(true);
       resetAllData(); 
       const storeId = currentStore.id;
-      const [
-        { data: prodData }, { data: salesData }, { data: expData }, 
-        { data: custData }, { data: suppData }, { data: purData }
-      ] = await Promise.all([
-        supabase.from('products').select('*').eq('storeId', storeId),
-        supabase.from('sales').select('*').eq('storeId', storeId).order('timestamp', { ascending: false }),
-        supabase.from('expenses').select('*').eq('storeId', storeId).order('timestamp', { ascending: false }),
-        supabase.from('customers').select('*').eq('storeId', storeId),
-        supabase.from('suppliers').select('*').eq('storeId', storeId),
-        supabase.from('purchases').select('*').eq('storeId', storeId).order('timestamp', { ascending: false })
-      ]);
-      setProducts(prodData || []);
-      setSales(salesData || []);
-      setExpenses(expData || []);
-      setCustomers(custData || []);
-      setSuppliers(suppData || []);
-      setPurchases(purData || []);
-      setIsDataLoading(false);
+      
+      try {
+        const [
+          { data: prodData }, { data: salesData }, { data: expData }, 
+          { data: custData }, { data: suppData }, { data: purData }
+        ] = await Promise.all([
+          supabase.from('products').select('*').eq('storeId', storeId),
+          supabase.from('sales').select('*').eq('storeId', storeId).order('timestamp', { ascending: false }),
+          supabase.from('expenses').select('*').eq('storeId', storeId).order('timestamp', { ascending: false }),
+          supabase.from('customers').select('*').eq('storeId', storeId),
+          supabase.from('suppliers').select('*').eq('storeId', storeId),
+          supabase.from('purchases').select('*').eq('storeId', storeId).order('timestamp', { ascending: false })
+        ]);
+
+        setProducts(prodData || []);
+        setSales(salesData || []);
+        setExpenses(expData || []);
+        setCustomers(custData || []);
+        setSuppliers(suppData || []);
+        setPurchases(purData || []);
+
+      } catch (error) {
+        console.error("Database Fetch Error:", error);
+      } finally {
+        setIsDataLoading(false);
+      }
     };
+
     fetchStoreData();
   }, [currentStore?.id, currentUser?.id, isAuthenticated]);
 
@@ -131,6 +162,7 @@ const App: React.FC = () => {
     setIsAuthenticated(false);
     setCurrentUser(null);
     setCurrentStore(null);
+    setIsInitialFetchDone(false);
     resetAllData();
     localStorage.clear(); 
   };
@@ -404,7 +436,6 @@ const App: React.FC = () => {
     return currentUser?.permissions?.[action] || false;
   };
 
-  // 🔴 Backup Generator Logic 🔴
   const handleDownloadBackup = useCallback(async (storeId: string, storeName: string) => {
     try {
       const [
@@ -441,7 +472,6 @@ const App: React.FC = () => {
     }
   }, [logActivity]);
 
-  // 🔴 Restore/Upload Data Logic 🔴
   const handleRestoreBackup = useCallback(async (storeId: string, storeName: string, file: File) => {
     try {
       const text = await file.text();
@@ -456,7 +486,6 @@ const App: React.FC = () => {
          if (!confirmMismatch) return;
       }
 
-      // Upsert: Updates existing items, inserts new ones without breaking foreign keys
       if (backupData.inventory.length > 0) {
          const { error } = await supabase.from('products').upsert(backupData.inventory);
          if (error) throw error;
@@ -472,7 +501,7 @@ const App: React.FC = () => {
 
       logActivity(`Restored JSON Backup for ${storeName}`);
       alert(`✅ সফলভাবে ডেটা রিস্টোর হয়েছে!\nনতুন ডেটা দেখার জন্য পেজটি রিলোড হচ্ছে।`);
-      window.location.reload(); // Reload to fetch fresh data
+      window.location.reload(); 
 
     } catch (error: any) {
       alert(`Restore failed: ${error.message}`);
@@ -480,28 +509,47 @@ const App: React.FC = () => {
   }, [logActivity]);
 
   if (!isAuthenticated || !currentUser) return <Login onLogin={handleLogin} />;
-  if (!currentStore || isDataLoading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-amber-400 font-black tracking-widest uppercase animate-pulse">Isolating Hub Data...</div>;
+  
+  if (isInitialFetchDone && !currentStore) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
+        <div className="bg-slate-900 border border-slate-800 p-8 rounded-[2.5rem] max-w-md w-full text-center shadow-2xl">
+           <h1 className="text-xl font-black text-rose-500 uppercase tracking-widest mb-2">Access Denied</h1>
+           <p className="text-slate-400 text-xs font-bold leading-relaxed mb-8">
+             {currentUser.role === UserRole.SUPER_ADMIN 
+               ? "No store hubs exist in the database. Please check your system." 
+               : "Your account has not been assigned to any specific Hub. Please contact your Super Admin."}
+           </p>
+           <button onClick={handleLogout} className="bg-rose-500 hover:bg-rose-600 transition-colors text-white w-full py-4 rounded-2xl font-black uppercase tracking-widest text-xs shadow-lg shadow-rose-500/20">Sign Out</button>
+        </div>
+      </div>
+    );
+ }
+
+  if (!currentStore || isDataLoading || !isInitialFetchDone) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-amber-400 font-black tracking-widest uppercase animate-pulse">Isolating Hub Data...</div>;
 
   return (
     <HashRouter>
       <Layout currentUser={currentUser} currentStore={currentStore} stores={stores} onStoreChange={setCurrentStore} users={users} onUserChange={setCurrentUser} products={products} onLogout={handleLogout}>
-        <Routes>
-          <Route path="/" element={currentUser.role !== UserRole.SALESMAN ? <Dashboard products={products} currentStore={currentStore} sales={sales} expenses={expenses} currentUser={currentUser} activities={activities} /> : <Navigate to="/inventory" replace />} />
-          <Route path="/inventory" element={<Inventory products={products} suppliers={suppliers} currentStore={currentStore} currentUser={currentUser} categories={categories} sales={sales} expenses={expenses} onUpdate={updateProduct} onDelete={deleteProduct} onAdd={addProduct} onAddSale={addSale} onAddExpense={addExpense} onUpdateExpense={updateExpense} onDeleteExpense={deleteExpense} onAddCategory={handleAddCategory} onRemoveCategory={handleRemoveCategory} onUpdateSupplierDue={updateSupplierDue} onAddPurchase={addPurchase} canEditPrices={checkPermission('inventory_edit')} canDelete={checkPermission('inventory_delete')} />} />
-          <Route path="/sales" element={<Sales sales={sales} products={products} customers={customers} expenses={expenses} currentStore={currentStore} currentUser={currentUser} onAddSale={addSale} onUpdateSale={updateSale} onUpdateStock={updateProduct} onUpdateCustomerDue={updateCustomerDue} onDeleteSale={deleteSale} canDelete={checkPermission('sales_delete')} />} />
-          <Route path="/customers" element={<Customers customers={customers} currentStore={currentStore} onAddCustomer={addCustomer} onUpdateCustomer={updateCustomer} onDeleteCustomer={deleteCustomer} onAddSale={addSale} onUpdateCustomerDue={updateCustomerDue} canEdit={checkPermission('customers_edit')} canDelete={checkPermission('customers_delete')} />} />
-          <Route path="/suppliers" element={<Suppliers suppliers={suppliers} currentStore={currentStore} onAddSupplier={addSupplier} onUpdateSupplier={updateSupplier} onDeleteSupplier={deleteSupplier} onAddExpense={addExpense} onUpdateSupplierDue={updateSupplierDue} canEdit={checkPermission('suppliers_edit')} canDelete={checkPermission('suppliers_delete')} />} />
-          <Route path="/purchases" element={<Purchases purchases={purchases} suppliers={suppliers} products={products} currentStore={currentStore} onAddPurchase={addPurchase} onUpdateStock={updateProduct} onUpdateSupplierDue={updateSupplierDue} onDeletePurchase={deletePurchase} canDelete={checkPermission('purchase_delete')} />} />
-          <Route path="/expenses" element={currentUser.role !== UserRole.SALESMAN ? <Expenses expenses={expenses} currentStore={currentStore} currentUser={currentUser} expenseCategories={expenseCategories} onAddExpense={addExpense} onUpdateExpense={updateExpense} onDeleteExpense={deleteExpense} onAddExpenseCategory={handleAddExpenseCategory} onRemoveExpenseCategory={handleRemoveExpenseCategory} canEdit={checkPermission('expenses_edit')} canDelete={checkPermission('expenses_delete')} /> : <Navigate to="/inventory" replace />} />
-          <Route path="/wastage" element={currentUser.role !== UserRole.SALESMAN ? <Wastage products={products} currentStore={currentStore} expenses={expenses} onUpdateStock={updateProduct} onAddExpense={addExpense} onDeleteExpense={deleteExpense} canDelete={checkPermission('expenses_delete')} /> : <Navigate to="/inventory" replace />} />
-          <Route path="/scanner" element={<Scanner products={products} currentStore={currentStore} onUpdate={updateProduct} onAddSale={addSale} />} />
-          <Route path="/users" element={currentUser.role === UserRole.SUPER_ADMIN || checkPermission('user_control_access') ? <Users users={users} stores={stores} setUsers={setUsers} /> : <Navigate to="/" replace />} />
-          
-          {/* 🔴 Settings Route updated to include onRestoreBackup 🔴 */}
-          <Route path="/settings" element={currentUser.role === UserRole.SUPER_ADMIN ? <Settings stores={stores} currentUser={currentUser} users={users} currentStore={currentStore} setStores={setStores} setUsers={setUsers} setCurrentUser={setCurrentUser} setCurrentStore={setCurrentStore} onDeleteStore={deleteStore} onDownloadBackup={handleDownloadBackup} onRestoreBackup={handleRestoreBackup} canEditStores={checkPermission('settings_access')} /> : <Navigate to="/" replace />} />
-          
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+        
+        {/* 🔴 Suspense Added Here 🔴 */}
+        <Suspense fallback={<div className="min-h-screen bg-slate-950 flex items-center justify-center text-amber-400 font-black tracking-widest uppercase animate-pulse">Loading Module...</div>}>
+          <Routes>
+            <Route path="/" element={currentUser.role !== UserRole.SALESMAN ? <Dashboard products={products} currentStore={currentStore} sales={sales} expenses={expenses} currentUser={currentUser} activities={activities} /> : <Navigate to="/inventory" replace />} />
+            <Route path="/inventory" element={<Inventory products={products} suppliers={suppliers} currentStore={currentStore} currentUser={currentUser} categories={categories} sales={sales} expenses={expenses} onUpdate={updateProduct} onDelete={deleteProduct} onAdd={addProduct} onAddSale={addSale} onAddExpense={addExpense} onUpdateExpense={updateExpense} onDeleteExpense={deleteExpense} onAddCategory={handleAddCategory} onRemoveCategory={handleRemoveCategory} onUpdateSupplierDue={updateSupplierDue} onAddPurchase={addPurchase} canEditPrices={checkPermission('inventory_edit')} canDelete={checkPermission('inventory_delete')} />} />
+            <Route path="/sales" element={<Sales sales={sales} products={products} customers={customers} expenses={expenses} currentStore={currentStore} currentUser={currentUser} onAddSale={addSale} onUpdateSale={updateSale} onUpdateStock={updateProduct} onUpdateCustomerDue={updateCustomerDue} onDeleteSale={deleteSale} canDelete={checkPermission('sales_delete')} />} />
+            <Route path="/customers" element={<Customers customers={customers} currentStore={currentStore} onAddCustomer={addCustomer} onUpdateCustomer={updateCustomer} onDeleteCustomer={deleteCustomer} onAddSale={addSale} onUpdateCustomerDue={updateCustomerDue} canEdit={checkPermission('customers_edit')} canDelete={checkPermission('customers_delete')} />} />
+            <Route path="/suppliers" element={<Suppliers suppliers={suppliers} currentStore={currentStore} onAddSupplier={addSupplier} onUpdateSupplier={updateSupplier} onDeleteSupplier={deleteSupplier} onAddExpense={addExpense} onUpdateSupplierDue={updateSupplierDue} canEdit={checkPermission('suppliers_edit')} canDelete={checkPermission('suppliers_delete')} />} />
+            <Route path="/purchases" element={<Purchases purchases={purchases} suppliers={suppliers} products={products} currentStore={currentStore} onAddPurchase={addPurchase} onUpdateStock={updateProduct} onUpdateSupplierDue={updateSupplierDue} onDeletePurchase={deletePurchase} canDelete={checkPermission('purchase_delete')} />} />
+            <Route path="/expenses" element={currentUser.role !== UserRole.SALESMAN ? <Expenses expenses={expenses} currentStore={currentStore} currentUser={currentUser} expenseCategories={expenseCategories} onAddExpense={addExpense} onUpdateExpense={updateExpense} onDeleteExpense={deleteExpense} onAddExpenseCategory={handleAddExpenseCategory} onRemoveExpenseCategory={handleRemoveExpenseCategory} canEdit={checkPermission('expenses_edit')} canDelete={checkPermission('expenses_delete')} /> : <Navigate to="/inventory" replace />} />
+            <Route path="/wastage" element={currentUser.role !== UserRole.SALESMAN ? <Wastage products={products} currentStore={currentStore} expenses={expenses} onUpdateStock={updateProduct} onAddExpense={addExpense} onDeleteExpense={deleteExpense} canDelete={checkPermission('expenses_delete')} /> : <Navigate to="/inventory" replace />} />
+            <Route path="/scanner" element={<Scanner products={products} currentStore={currentStore} onUpdate={updateProduct} onAddSale={addSale} />} />
+            <Route path="/users" element={currentUser.role === UserRole.SUPER_ADMIN || checkPermission('user_control_access') ? <Users users={users} stores={stores} setUsers={setUsers} /> : <Navigate to="/" replace />} />
+            <Route path="/settings" element={currentUser.role === UserRole.SUPER_ADMIN ? <Settings stores={stores} currentUser={currentUser} users={users} currentStore={currentStore} setStores={setStores} setUsers={setUsers} setCurrentUser={setCurrentUser} setCurrentStore={setCurrentStore} onDeleteStore={deleteStore} onDownloadBackup={handleDownloadBackup} onRestoreBackup={handleRestoreBackup} canEditStores={checkPermission('settings_access')} /> : <Navigate to="/" replace />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </Suspense>
+
       </Layout>
     </HashRouter>
   );
