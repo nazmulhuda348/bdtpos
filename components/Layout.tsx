@@ -62,18 +62,19 @@ const Layout: React.FC<LayoutProps> = ({
     return products.filter(p => p.storeId === currentStore.id && p.quantity <= p.minThreshold);
   }, [products, currentStore.id]);
 
+  // 🔴 Store Owner Role Added to navItems 🔴
   const navItems = [
-    { name: 'Analytics', path: '/', icon: LayoutDashboard, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER] },
-    { name: 'Inventory', path: '/inventory', icon: Package, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER, UserRole.SALESMAN] },
-    { name: 'Sales', path: '/sales', icon: ShoppingCart, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER, UserRole.SALESMAN] },
-    { name: 'Purchases', path: '/purchases', icon: ShoppingBag, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER] },
-    { name: 'Customers', path: '/customers', icon: Users, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER, UserRole.SALESMAN] },
-    { name: 'Suppliers', path: '/suppliers', icon: Truck, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER] },
-    { name: 'Log Expense', path: '/expenses', icon: Wallet, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER] },
-    { name: 'Wastage', path: '/wastage', icon: Trash2, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER] },
-    { name: 'Scanner', path: '/scanner', icon: ScanLine, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER, UserRole.SALESMAN] },
+    { name: 'Analytics', path: '/', icon: LayoutDashboard, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER, 'STORE_OWNER' as UserRole] },
+    { name: 'Inventory', path: '/inventory', icon: Package, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER, 'STORE_OWNER' as UserRole, UserRole.SALESMAN] },
+    { name: 'Sales', path: '/sales', icon: ShoppingCart, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER, 'STORE_OWNER' as UserRole, UserRole.SALESMAN] },
+    { name: 'Purchases', path: '/purchases', icon: ShoppingBag, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER, 'STORE_OWNER' as UserRole] },
+    { name: 'Customers', path: '/customers', icon: Users, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER, 'STORE_OWNER' as UserRole, UserRole.SALESMAN] },
+    { name: 'Suppliers', path: '/suppliers', icon: Truck, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER, 'STORE_OWNER' as UserRole] },
+    { name: 'Log Expense', path: '/expenses', icon: Wallet, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER, 'STORE_OWNER' as UserRole] },
+    { name: 'Wastage', path: '/wastage', icon: Trash2, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER, 'STORE_OWNER' as UserRole] },
+    { name: 'Scanner', path: '/scanner', icon: ScanLine, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER, 'STORE_OWNER' as UserRole, UserRole.SALESMAN] },
     { name: 'User Control', path: '/users', icon: UsersIcon, permission: 'user_control_access' as keyof UserPermissions, roles: [UserRole.SUPER_ADMIN] },
-    { name: 'Settings', path: '/settings', icon: Settings, permission: 'settings_access' as keyof UserPermissions, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER, UserRole.SALESMAN] },
+    { name: 'Settings', path: '/settings', icon: Settings, permission: 'settings_access' as keyof UserPermissions, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER, 'STORE_OWNER' as UserRole, UserRole.SALESMAN] },
   ].filter(item => {
     if (currentUser.role === UserRole.SUPER_ADMIN) return true;
     if (item.permission && !currentUser.permissions?.[item.permission]) return false;
@@ -144,7 +145,7 @@ const Layout: React.FC<LayoutProps> = ({
                 <p className="text-xs font-bold text-white truncate">{currentUser.name}</p>
                 <p className="text-[10px] text-amber-500 font-extrabold flex items-center gap-1 uppercase tracking-tighter">
                   {currentUser.role === UserRole.SUPER_ADMIN ? <ShieldCheck className="w-3 h-3" /> : <ShieldOff className="w-3 h-3" />}
-                  {currentUser.role}
+                  {currentUser.role.replace('_', ' ')}
                 </p>
               </div>
             </div>
