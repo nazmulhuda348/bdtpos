@@ -435,7 +435,6 @@ const Sales: React.FC<SalesProps> = ({
     setShowPrintModal(true);
   };
 
-  // 🔴 LEDGER VIEW (ঐতিহাসিক সেলস) 🔴
   if (!isSessionActive) {
     const historicalSales = sales
       .filter(s => s.storeId === currentStore.id)
@@ -456,7 +455,6 @@ const Sales: React.FC<SalesProps> = ({
 
     return (
       <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-700">
-        {/* Header & Stats */}
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
           <div>
             <h1 className="text-3xl font-black text-white tracking-tight">Sales Operations</h1>
@@ -547,7 +545,6 @@ const Sales: React.FC<SalesProps> = ({
                       </td>
                       <td className="px-6 py-5 text-right">
                         <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                          {/* 🔴 Buttons (Visible in Ledger) 🔴 */}
                           {!isPayment && !isVoid && !isReturn && (
                             <button onClick={() => handleOpenReturn(sale)} title="Return Item" className="p-2 text-slate-600 hover:text-orange-400"><RotateCcw className="w-4 h-4" /></button>
                           )}
@@ -583,7 +580,6 @@ const Sales: React.FC<SalesProps> = ({
           )}
         </div>
 
-        {/* 🔴 Modals for Ledger View 🔴 */}
         <AnimatePresence>
           {isReturnModalOpen && saleToReturn && (
             <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
@@ -600,7 +596,8 @@ const Sales: React.FC<SalesProps> = ({
 
                      <div className="space-y-2">
                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2">Return Quantity</label>
-                         <input type="number" min="1" max={getReturnableQty(saleToReturn)} value={returnQty} onChange={e => setReturnQty(parseInt(e.target.value) || 1)} className="w-full px-5 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-orange-400 font-black focus:border-orange-500" />
+                         {/* 🔴 Fixed: onWheel and onFocus added */}
+                         <input type="number" min="1" max={getReturnableQty(saleToReturn)} value={returnQty} onWheel={(e) => (e.target as HTMLInputElement).blur()} onFocus={e => e.target.select()} onChange={e => setReturnQty(parseInt(e.target.value) || 1)} className="w-full px-5 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-orange-400 font-black focus:border-orange-500" />
                          <p className="text-[10px] text-orange-500/80 font-bold text-right mr-2 mt-1">Max returnable: {getReturnableQty(saleToReturn)}</p>
                      </div>
 
@@ -703,7 +700,6 @@ const Sales: React.FC<SalesProps> = ({
     );
   }
 
-  // 🔴 ACTIVE SESSION VIEW (নতুন সেলস পেজ) 🔴
   return (
     <div className="h-[calc(100vh-140px)] flex flex-col lg:flex-row gap-8 animate-in fade-in zoom-in-95 duration-500 overflow-hidden">
       <div className="lg:w-[450px] flex flex-col bg-slate-900 border border-slate-800 rounded-[2.5rem] shadow-2xl p-8 overflow-y-auto custom-scrollbar relative">
@@ -738,6 +734,7 @@ const Sales: React.FC<SalesProps> = ({
 
           {scannerError && <div className="bg-rose-500/10 border border-rose-500/20 p-4 rounded-2xl flex items-center gap-3 text-rose-400 text-xs font-bold"><CameraOff className="w-4 h-4" /><p>{scannerError}</p></div>}
 
+          {/* 🔴 আপনার অরিজিনাল SKU ইনফরমেশন লজিক 🔴 */}
           {matchedProduct && (
             <div className="grid grid-cols-1 gap-4 animate-in slide-in-from-top-2">
               <div className="space-y-2"><label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Name</label><div className="w-full px-5 py-3.5 bg-slate-800/50 border border-slate-800 rounded-xl text-slate-400 font-bold text-xs truncate select-none italic">{matchedProduct.name}</div></div>
@@ -761,14 +758,16 @@ const Sales: React.FC<SalesProps> = ({
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">volume (qty)</label>
               <div className="relative group">
                 <Hash className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-amber-400 transition-colors" />
-                <input required type="number" min="1" max={matchedProduct?.quantity || 1} value={quantity} onChange={e => setQuantity(parseInt(e.target.value) || 0)} className="w-full pl-12 pr-4 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-black focus:border-amber-400 amber-glow" />
+                {/* 🔴 Fixed: onWheel and onFocus added */}
+                <input required type="number" min="1" max={matchedProduct?.quantity || 1} value={quantity} onWheel={(e) => (e.target as HTMLInputElement).blur()} onFocus={e => e.target.select()} onChange={e => setQuantity(parseInt(e.target.value) || 0)} className="w-full pl-12 pr-4 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-black focus:border-amber-400 amber-glow" />
               </div>
             </div>
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">selling price ($)</label>
               <div className="relative group">
                 <DollarSign className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-amber-400 transition-colors" />
-                <input required type="number" step="0.01" value={unitPrice} onChange={e => setUnitPrice(parseFloat(e.target.value) || 0)} className="w-full pl-12 pr-4 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-emerald-400 font-black focus:border-amber-400 amber-glow" />
+                {/* 🔴 Fixed: onWheel and onFocus added */}
+                <input required type="number" step="0.01" value={unitPrice} onWheel={(e) => (e.target as HTMLInputElement).blur()} onFocus={e => e.target.select()} onChange={e => setUnitPrice(parseFloat(e.target.value) || 0)} className="w-full pl-12 pr-4 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-emerald-400 font-black focus:border-amber-400 amber-glow" />
               </div>
             </div>
           </div>
@@ -776,13 +775,15 @@ const Sales: React.FC<SalesProps> = ({
           <div className={`grid grid-cols-2 gap-4 transition-all duration-500 ${!matchedProduct ? 'opacity-30 pointer-events-none blur-[1px]' : ''}`}>
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">discount (%)</label>
-              <input type="number" min="0" max="100" value={discount} onChange={e => setDiscount(parseFloat(e.target.value) || 0)} className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-rose-500 font-black focus:border-amber-400 amber-glow" />
+              {/* 🔴 Fixed: onWheel and onFocus added */}
+              <input type="number" min="0" max="100" value={discount} onWheel={(e) => (e.target as HTMLInputElement).blur()} onFocus={e => e.target.select()} onChange={e => setDiscount(parseFloat(e.target.value) || 0)} className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-rose-500 font-black focus:border-amber-400 amber-glow" />
             </div>
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">amount paid ($)</label>
               <div className="relative group">
                 <CreditCard className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-amber-400 transition-colors" />
-                <input type="number" step="0.01" disabled={!customerId} value={!customerId ? totalAmount : amountPaid} onChange={e => setAmountPaid(parseFloat(e.target.value) || 0)} className={`w-full pl-12 pr-4 py-4 rounded-2xl outline-none font-black transition-all ${!customerId ? 'bg-emerald-900/20 border border-emerald-500/30 text-emerald-500 cursor-not-allowed' : 'bg-slate-800 border border-slate-700 text-amber-400 focus:border-amber-400 amber-glow'}`} />
+                {/* 🔴 Fixed: onWheel and onFocus added */}
+                <input type="number" step="0.01" disabled={!customerId} value={!customerId ? totalAmount : amountPaid} onWheel={(e) => (e.target as HTMLInputElement).blur()} onFocus={e => e.target.select()} onChange={e => setAmountPaid(parseFloat(e.target.value) || 0)} className={`w-full pl-12 pr-4 py-4 rounded-2xl outline-none font-black transition-all ${!customerId ? 'bg-emerald-900/20 border border-emerald-500/30 text-emerald-500 cursor-not-allowed' : 'bg-slate-800 border border-slate-700 text-amber-400 focus:border-amber-400 amber-glow'}`} />
               </div>
             </div>
           </div>
@@ -818,8 +819,17 @@ const Sales: React.FC<SalesProps> = ({
                 {sessionSales.map((sale) => (
                     <tr key={sale.id} className="group hover:bg-slate-800/40 transition-all animate-in slide-in-from-right-4 duration-300">
                       <td className="px-6 py-5"><p className="font-bold text-white text-sm truncate max-w-[180px]">{sale.productName}</p><p className="text-[10px] text-slate-500 font-bold uppercase tracking-tighter italic">{sale.customerName}</p></td>
-                      <td className="px-6 py-5 text-center"><input type="number" min="1" value={sale.quantity} onChange={(e) => handleLedgerQuantityChange(sale, parseInt(e.target.value))} className="w-20 bg-slate-800 border border-slate-700 rounded-xl text-center font-black text-amber-400 text-sm focus:border-amber-400 outline-none p-1.5 shadow-inner" /></td>
-                      <td className="px-6 py-5 text-right"><div className="flex items-center justify-end gap-1"><span className="text-emerald-400 text-xs font-bold">$</span><input type="number" step="0.01" value={sale.totalPrice} onChange={(e) => handleLedgerTotalChange(sale, parseFloat(e.target.value))} className="w-28 bg-slate-800 border border-slate-700 rounded-xl text-right font-black text-emerald-400 text-sm focus:border-emerald-400 outline-none p-1.5 shadow-inner" /></div></td>
+                      <td className="px-6 py-5 text-center">
+                         {/* 🔴 Fixed: onWheel and onFocus added */}
+                         <input type="number" min="1" value={sale.quantity} onWheel={(e) => (e.target as HTMLInputElement).blur()} onFocus={e => e.target.select()} onChange={(e) => handleLedgerQuantityChange(sale, parseInt(e.target.value))} className="w-20 bg-slate-800 border border-slate-700 rounded-xl text-center font-black text-amber-400 text-sm focus:border-amber-400 outline-none p-1.5 shadow-inner" />
+                      </td>
+                      <td className="px-6 py-5 text-right">
+                         <div className="flex items-center justify-end gap-1">
+                            <span className="text-emerald-400 text-xs font-bold">$</span>
+                            {/* 🔴 Fixed: onWheel and onFocus added */}
+                            <input type="number" step="0.01" value={sale.totalPrice} onWheel={(e) => (e.target as HTMLInputElement).blur()} onFocus={e => e.target.select()} onChange={(e) => handleLedgerTotalChange(sale, parseFloat(e.target.value))} className="w-28 bg-slate-800 border border-slate-700 rounded-xl text-right font-black text-emerald-400 text-sm focus:border-emerald-400 outline-none p-1.5 shadow-inner" />
+                         </div>
+                      </td>
                     </tr>
                 ))}
                 {sessionSales.length === 0 && <tr><td colSpan={3} className="px-6 py-20 text-center opacity-30 grayscale"><LayoutDashboard className="w-12 h-12 mx-auto text-slate-600 mb-4" /><p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Awaiting session confirm</p></td></tr>}

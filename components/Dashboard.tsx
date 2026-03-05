@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase';
 import { 
   DollarSign, TrendingUp, Package, AlertTriangle, ShoppingCart, 
   Zap, Wallet, LayoutDashboard, Check, Calendar, CreditCard, 
-  QrCode, X, CheckCircle2, Clock, Activity 
+  QrCode, X, CheckCircle2, Clock, Activity, Edit2 
 } from 'lucide-react';
 
 interface DashboardProps {
@@ -23,6 +23,28 @@ const Dashboard: React.FC<DashboardProps> = ({ products, currentStore, sales, ex
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
 
+  // 🔴 Initial Investment State (সম্পূর্ণ নতুন যোগ করা হয়েছে, অন্য কিছুতে প্রভাব ফেলবে না) 🔴
+  const [initialInvestment, setInitialInvestment] = useState<number>(() => {
+    const saved = localStorage.getItem(`omni_invest_${currentStore.id}`);
+    return saved ? parseFloat(saved) : 0;
+  });
+  const [isEditingInvest, setIsEditingInvest] = useState(false);
+  const [investInput, setInvestInput] = useState(initialInvestment.toString());
+
+  useEffect(() => {
+    const saved = localStorage.getItem(`omni_invest_${currentStore.id}`);
+    const val = saved ? parseFloat(saved) : 0;
+    setInitialInvestment(val);
+    setInvestInput(val.toString());
+  }, [currentStore.id]);
+
+  const handleSaveInvestment = () => {
+    const val = parseFloat(investInput) || 0;
+    setInitialInvestment(val);
+    localStorage.setItem(`omni_invest_${currentStore.id}`, val.toString());
+    setIsEditingInvest(false);
+  };
+
   const [paymentHistory, setPaymentHistory] = useState<any[]>([]);
   const [isLoadingStatus, setIsLoadingStatus] = useState(true);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
@@ -31,6 +53,7 @@ const Dashboard: React.FC<DashboardProps> = ({ products, currentStore, sales, ex
 
   const bKashNumber = "01633334466"; 
 
+  // আপনার অরিজিনাল বিকাশ লজিক - এখানে আমি কোনো হাত দিইনি
   const getCheckableMonths = () => {
     const months = [];
     const now = new Date();
@@ -50,6 +73,7 @@ const Dashboard: React.FC<DashboardProps> = ({ products, currentStore, sales, ex
 
   const relevantMonths = getCheckableMonths();
 
+  // আপনার অরিজিনাল useEffect - এখানেও কোনো হাত দিইনি (Flickering হবে না)
   useEffect(() => {
     const fetchPaymentStatus = async () => {
       setIsLoadingStatus(true);
@@ -112,8 +136,10 @@ const Dashboard: React.FC<DashboardProps> = ({ products, currentStore, sales, ex
       }
     });
     filteredExpenses.forEach(e => e.category === 'Wastage' ? wastageLoss += e.amount : totalExpense += e.amount);
-    return { totalSales, totalProfit: totalProfit - wastageLoss, totalExpense, netBalance: totalCashIn - totalExpense };
-  }, [sales, products, expenses, currentStore.id, selectedMonth]);
+    
+    // 🔴 শুধু এখানে initialInvestment যোগ করে দিয়েছি Net Balance এর জন্য 🔴
+    return { totalSales, totalProfit: totalProfit - wastageLoss, totalExpense, netBalance: totalCashIn + initialInvestment - totalExpense };
+  }, [sales, products, expenses, currentStore.id, selectedMonth, initialInvestment]);
 
   const lowStockList = inventoryStats.storeProducts.filter(p => p.quantity <= p.minThreshold);
 
@@ -125,6 +151,7 @@ const Dashboard: React.FC<DashboardProps> = ({ products, currentStore, sales, ex
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
       
+      {/* আপনার অরিজিনাল বিকাশ সেকশন */}
       {currentUser.role !== UserRole.SUPER_ADMIN && (
         <>
           {isLoadingStatus ? (
@@ -164,14 +191,45 @@ const Dashboard: React.FC<DashboardProps> = ({ products, currentStore, sales, ex
         </>
       )}
 
+      {/* 🔴 এখানে শুধু Initial Capital এর বক্সটি বসানো হয়েছে 🔴 */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
         <div>
           <h1 className="text-3xl font-black text-white tracking-tight flex items-center gap-3">Command Center</h1>
           <p className="text-slate-500 font-medium mt-1">Financial metrics for <span className="text-amber-400 font-black">{currentStore.name}</span></p>
         </div>
-        <div className="flex items-center gap-3 bg-slate-900 border border-slate-800 p-2 rounded-2xl shadow-xl">
-          <Calendar className="w-5 h-5 text-slate-400 ml-2" />
-          <input type="month" value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)} className="bg-transparent text-white font-bold outline-none cursor-pointer pr-4" />
+        
+        <div className="flex flex-wrap items-center gap-4">
+          
+          <div className="flex items-center gap-3 bg-slate-900 border border-slate-800 p-2 pl-4 rounded-2xl shadow-xl">
+            <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Initial Capital:</span>
+            {isEditingInvest ? (
+              <div className="flex items-center gap-2">
+                <input 
+                  type="number" 
+                  value={investInput} 
+                  onChange={e => setInvestInput(e.target.value)} 
+                  className="bg-slate-800 text-amber-400 font-black outline-none px-3 py-1 rounded-xl w-24 text-sm focus:border focus:border-amber-400/50" 
+                  autoFocus 
+                />
+                <button onClick={handleSaveInvestment} className="p-1.5 bg-emerald-500/20 text-emerald-400 rounded-lg hover:bg-emerald-500/30 transition-colors"><Check className="w-4 h-4" /></button>
+                <button onClick={() => {setIsEditingInvest(false); setInvestInput(initialInvestment.toString());}} className="p-1.5 bg-rose-500/20 text-rose-400 rounded-lg hover:bg-rose-500/30 transition-colors"><X className="w-4 h-4" /></button>
+              </div>
+            ) : (
+              <div 
+                className="flex items-center gap-2 cursor-pointer group px-2 py-1 bg-slate-800/50 rounded-xl hover:bg-slate-800 transition-colors" 
+                onClick={() => setIsEditingInvest(true)}
+              >
+                <span className="text-amber-400 font-black text-sm">${initialInvestment.toLocaleString()}</span>
+                <Edit2 className="w-3 h-3 text-slate-500 group-hover:text-amber-400 transition-colors" />
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3 bg-slate-900 border border-slate-800 p-2 rounded-2xl shadow-xl">
+            <Calendar className="w-5 h-5 text-slate-400 ml-2" />
+            <input type="month" value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)} className="bg-transparent text-white font-bold outline-none cursor-pointer pr-4" />
+          </div>
+
         </div>
       </div>
 
@@ -252,7 +310,6 @@ const Dashboard: React.FC<DashboardProps> = ({ products, currentStore, sales, ex
              <button onClick={() => setIsPaymentModalOpen(false)} className="absolute top-6 right-6 text-slate-500 hover:text-white"><X className="w-6 h-6" /></button>
              <h2 className="text-2xl font-black text-white mb-6 flex items-center gap-2"><CreditCard className="w-6 h-6 text-pink-500" /> bKash Payment</h2>
              
-             {/* 🔴 bKash Number & QR Section Added Back 🔴 */}
              <div className="bg-slate-800/50 p-6 rounded-2xl border border-slate-700/50 text-center mb-6 shadow-inner">
                 <QrCode className="w-16 h-16 text-pink-500 mx-auto mb-3" />
                 <p className="text-xs text-slate-400 font-bold uppercase tracking-widest mb-1">Send Money to bKash</p>

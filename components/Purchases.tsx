@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Purchase, Supplier, Product, Store, User } from '../types';
+import { Purchase, Supplier, Product, Store, User, Expense } from '../types';
 import { 
   ShoppingBag, Search, Plus, Truck, DollarSign, Trash2, Download,
   Calendar, Hash, ArrowRight, Package, Check, X, AlertOctagon,
@@ -16,12 +16,13 @@ interface PurchasesProps {
   onUpdateStock: (id: string, updates: Partial<Product>) => void | Promise<void>;
   onUpdateSupplierDue: (id: string, amount: number) => void | Promise<void>;
   onDeletePurchase: (id: string) => void | Promise<void>;
+  onAddExpense?: (expense: Omit<Expense, 'id' | 'timestamp'>) => void | Promise<void>; // 🔴 New: Expense যুক্ত করার পারমিশন
   canDelete: boolean;
 }
 
 const Purchases: React.FC<PurchasesProps> = ({ 
   purchases, suppliers, products, currentStore, 
-  onAddPurchase, onUpdateStock, onUpdateSupplierDue, onDeletePurchase, canDelete
+  onAddPurchase, onUpdateStock, onUpdateSupplierDue, onDeletePurchase, onAddExpense, canDelete
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -109,7 +110,12 @@ const Purchases: React.FC<PurchasesProps> = ({
     const effectiveUnitCost = purchase.totalCost / purchase.quantity;
     const financialMax = Math.floor(currentDue / effectiveUnitCost);
     
-    return Math.min(physicalMax, financialMax);
+    // 🔴 New Logic: স্টকে কয়টি প্রোডাক্ট আছে তা চেক করা 🔴
+    const product = products.find(p => p.id === purchase.productId);
+    const currentStock = product ? product.quantity : 0;
+    
+    // রিটার্ন করা যাবে = ফিজিক্যাল কেনা স্টক, বকেয়া অনুযায়ী ম্যাক্স স্টক, এবং বর্তমান স্টকের মধ্যে যেটি সবচেয়ে ছোট
+    return Math.min(physicalMax, financialMax, currentStock);
   };
 
   const handleOpenReturn = (purchase: Purchase) => {
@@ -128,11 +134,18 @@ const Purchases: React.FC<PurchasesProps> = ({
         return;
     }
 
+    // 🔴 New Logic: স্টক জিরো হলে রিটার্ন ব্লক করা 🔴
+    const product = products.find(p => p.id === purchase.productId);
+    if (!product || product.quantity <= 0) {
+        alert('Action Denied: You do not have any of this product in stock to return.');
+        return;
+    }
+
     // 🔴 Block 2: Over-Return Block 🔴
     const maxQty = getMaxAllowedReturnQty(purchase);
     if (maxQty <= 0) {
         const effectiveUnitCost = purchase.totalCost / purchase.quantity;
-        alert(`Action Denied: Returning even 1 item ($${effectiveUnitCost.toFixed(2)}) exceeds the supplier's current due of $${currentDue.toFixed(2)}.`);
+        alert(`Action Denied: Returning even 1 item ($${effectiveUnitCost.toFixed(2)}) exceeds the supplier's current due of $${currentDue.toFixed(2)}, or you don't have enough stock.`);
         return;
     }
 
@@ -148,7 +161,7 @@ const Purchases: React.FC<PurchasesProps> = ({
     // Strict calculation based on Due Limit
     const maxQty = getMaxAllowedReturnQty(purchaseToReturn);
     if (returnQty <= 0 || returnQty > maxQty) {
-        alert(`Invalid return quantity. Maximum allowed (based on due) is ${maxQty}.`);
+        alert(`Invalid return quantity. Maximum allowed (based on stock and due) is ${maxQty}.`);
         return;
     }
 
@@ -231,6 +244,16 @@ const Purchases: React.FC<PurchasesProps> = ({
         });
 
         await onUpdateSupplierDue(supplier.id, -paymentAmount);
+
+        // 🔴 New Logic: পেমেন্ট করলে অটোমেটিক Expense এ যুক্ত হবে 🔴
+        if (onAddExpense) {
+            await onAddExpense({
+                storeId: currentStore.id,
+                category: "Supplier Payment",
+                amount: paymentAmount,
+                description: `Payment to ${supplier.name} (PO: ${payPoNumber})`
+            });
+        }
 
         alert(`Payment of $${paymentAmount.toFixed(2)} recorded successfully.`);
         setIsPaymentModalOpen(false);
@@ -431,7 +454,7 @@ const Purchases: React.FC<PurchasesProps> = ({
                    <div className="space-y-2">
                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2">Return Quantity</label>
                        <input type="number" min="1" max={getMaxAllowedReturnQty(purchaseToReturn)} value={returnQty} onFocus={e => e.target.select()} onChange={e => setReturnQty(parseInt(e.target.value) || 1)} className="w-full px-5 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-orange-400 font-black focus:border-orange-500" />
-                       <p className="text-[10px] text-orange-500/80 font-bold text-right mr-2 mt-1">Due Limit Max: {getMaxAllowedReturnQty(purchaseToReturn)} items</p>
+                       <p className="text-[10px] text-orange-500/80 font-bold text-right mr-2 mt-1">Allowed Max: {getMaxAllowedReturnQty(purchaseToReturn)} items</p>
                    </div>
 
                    <div className="bg-orange-500/10 border border-orange-500/20 p-4 rounded-2xl">

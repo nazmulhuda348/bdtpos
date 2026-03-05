@@ -28,20 +28,21 @@ import {
 } from 'lucide-react';
 
 interface InventoryProps {
-  products: Product[];
+  products: Product[]; 
   suppliers: Supplier[];
-  currentStore: Store;
-  currentUser: User;
+  purchases: Purchase[]; 
+  currentStore: Store; 
+  currentUser: User; 
   categories: string[];
   sales: Sale[];
   expenses: Expense[];
-  onUpdate: (id: string, updates: Partial<Product>) => void;
+  onUpdate: (id: string, updates: Partial<Product> & { linkedExpenseId?: string }) => void;
   onDelete: (id: string) => void;
-  onAdd: (newProduct: Omit<Product, 'id' | 'lastUpdated'>) => void;
+  onAdd: (newProduct: Omit<Product, 'id' | 'lastUpdated'>) => Promise<any> | void; 
   onAddSale: (sale: Omit<Sale, 'id' | 'timestamp'>) => void;
-  onAddExpense: (expense: Omit<Expense, 'id' | 'timestamp'>) => void;
+  onAddExpense: (expense: Omit<Expense, 'id' | 'timestamp'>) => Promise<any> | any;
   onUpdateExpense: (id: string, updates: Partial<Expense>) => void;
-  onDeleteExpense: (id: string) => void;
+  onDeleteExpense: (id: string) => Promise<any> | any;
   onAddCategory: (name: string) => void;
   onRemoveCategory: (name: string) => void;
   onUpdateSupplierDue: (id: string, amount: number) => void;
@@ -53,17 +54,22 @@ interface InventoryProps {
 const Inventory: React.FC<InventoryProps> = ({ 
   products, 
   suppliers,
+  purchases, 
   currentStore, 
   currentUser, 
   categories,
+  expenses,
   onUpdate, 
   onDelete,
   onAdd,
   onAddExpense,
+  onUpdateExpense,
+  onDeleteExpense,
   onAddCategory,
   onRemoveCategory,
   onUpdateSupplierDue,
   onAddPurchase,
+  canEditPrices,
   canDelete
 }) => {
   const [isRegistrationActive, setIsRegistrationActive] = useState(false);
@@ -212,20 +218,77 @@ const Inventory: React.FC<InventoryProps> = ({
     setScannerError(null);
   };
 
-  const handleRegisterSubmit = (e: React.FormEvent) => {
+  const handleEditAsset = (product: Product) => {
+    const hasUnpaidDues = purchases?.some(purchase => {
+      if (purchase.productId === product.id && purchase.amountDue > 0) {
+        const supplier = suppliers.find(s => s.id === purchase.supplierId);
+        return supplier && supplier.totalDue > 0;
+      }
+      return false;
+    });
+
+    if (hasUnpaidDues) {
+      alert("⚠️ অ্যাকশন বাতিল! এই প্রোডাক্টটির সাপ্লায়ারের বকেয়া এখনো সম্পূর্ণ পরিশোধ করা হয়নি। এডিট করার আগে সাপ্লায়ার প্যানেল থেকে বকেয়া ক্লিয়ার করুন।");
+      return;
+    }
+
+    setEditingProduct(product);
+    setScannedSku(product.sku);
+    setIsRegistrationActive(true);
+  };
+
+  const handleDeleteAsset = async (product: Product & { linkedExpenseId?: string }) => {
+    const hasUnpaidDues = purchases?.some(purchase => {
+      if (purchase.productId === product.id && purchase.amountDue > 0) {
+        const supplier = suppliers.find(s => s.id === purchase.supplierId);
+        return supplier && supplier.totalDue > 0;
+      }
+      return false;
+    });
+
+    if (hasUnpaidDues) {
+      alert("⚠️ অ্যাকশন বাতিল! এই প্রোডাক্টটির সাপ্লায়ারের বকেয়া এখনো সম্পূর্ণ পরিশোধ করা হয়নি। ডিলিট করার আগে সাপ্লায়ার প্যানেল থেকে বকেয়া ক্লিয়ার করুন।");
+      return;
+    }
+
+    if (window.confirm(`Are you sure you want to permanently delete ${product.name}? Any associated financial expenses will also be reversed.`)) {
+      try {
+        if (product.linkedExpenseId) {
+          await onDeleteExpense(product.linkedExpenseId);
+        } else {
+          // পুরনো প্রোডাক্ট ডিলিট করার জন্য ফলব্যাক
+          const fallbackExpense = expenses.find(exp => 
+            exp.storeId === currentStore.id && 
+            exp.category === "Operational Cost" &&
+            exp.description.includes(product.name)
+          );
+          if (fallbackExpense) {
+            await onDeleteExpense(fallbackExpense.id);
+          }
+        }
+        onDelete(product.id);
+      } catch (error) {
+        console.error("Failed to delete product or linked expense", error);
+        alert("Warning: Could not reverse associated expenses automatically.");
+      }
+    }
+  };
+
+  const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const form = e.target as any;
     
     const supplierId = form.pSupplier?.value;
-    const paidAmount = parseFloat(form.pPaidAmount?.value || '0');
+    const amountPaid = parseFloat(form.pPaidAmount?.value || '0'); 
     const supplier = suppliers.find(s => s.id === supplierId);
 
     const quantity = matchedProduct ? parseInt(form.pNewQty.value) : parseInt(form.pQty.value);
     const buyingPrice = parseFloat(form.pBuyingPrice.value);
     const totalCost = quantity * buyingPrice;
-    const dueAmount = totalCost - paidAmount;
+    const dueAmount = totalCost - amountPaid;
     
     const productName = matchedProduct?.name || form.pName.value;
+    let finalProductId = matchedProduct?.id; 
 
     if (matchedProduct) {
       onUpdate(matchedProduct.id, { 
@@ -245,19 +308,56 @@ const Inventory: React.FC<InventoryProps> = ({
       
       if(editingProduct) {
         onUpdate(editingProduct.id, data);
+        finalProductId = editingProduct.id;
+
+        // 🔴 SMART FALLBACK LOGIC: পুরনো প্রোডাক্টগুলোর খরচ আপডেট করার জন্য 🔴
+        let expenseIdToUpdate = editingProduct.linkedExpenseId;
+        
+        if (!expenseIdToUpdate) {
+          // যদি লিংক করা আইডি না থাকে, তবে নাম দিয়ে খুঁজে বের করবে
+          const fallbackExpense = expenses.find(exp => 
+            exp.storeId === currentStore.id && 
+            exp.category === "Operational Cost" &&
+            exp.description.includes(editingProduct.name) // পুরনো নাম দিয়ে খুঁজবে
+          );
+          
+          if (fallbackExpense) {
+            expenseIdToUpdate = fallbackExpense.id;
+            // ভবিষ্যতে যেন আর খুঁজতে না হয়, তাই আইডিটা লিংক করে দিচ্ছে
+            onUpdate(editingProduct.id, { linkedExpenseId: fallbackExpense.id });
+          }
+        }
+
+        // এক্সপেন্স আপডেট করা হচ্ছে
+        if (expenseIdToUpdate) {
+          const relatedExp = expenses.find(exp => exp.id === expenseIdToUpdate);
+          if (relatedExp && relatedExp.category === "Operational Cost") {
+            onUpdateExpense(expenseIdToUpdate, {
+              amount: totalCost, 
+              description: `Updated cash purchase: ${productName} (${quantity} units)`
+            });
+          }
+        }
+
       } else {
-        onAdd({...data, storeId: currentStore.id});
+        const result = await onAdd({...data, storeId: currentStore.id}) as any;
+        if (result && result.id) {
+            finalProductId = result.id;
+        }
       }
     }
 
-    if (supplier) {
-      if (paidAmount > 0) {
-        onAddExpense({
+    let generatedExpenseId: string | null = null;
+
+    if (supplier && finalProductId && !editingProduct) {
+      if (amountPaid > 0) {
+        const expResult = await onAddExpense({
           storeId: currentStore.id,
           category: "Inventory Purchase",
-          amount: paidAmount,
+          amount: amountPaid,
           description: `Paid to ${supplier.name} for stock`
         });
+        if (expResult && expResult.id) generatedExpenseId = expResult.id;
       }
 
       if (dueAmount > 0) {
@@ -268,31 +368,37 @@ const Inventory: React.FC<InventoryProps> = ({
         poNumber: `${matchedProduct ? 'INV' : 'REG'}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`,
         supplierId: supplier.id,
         supplierName: supplier.name,
-        productId: (matchedProduct?.id || null) as unknown as string,
+        productId: finalProductId, 
         productName: productName,
         quantity: quantity,
         unitCost: buyingPrice,
         totalCost: totalCost,
-        amountPaid: paidAmount,
+        amountPaid: amountPaid,
         amountDue: dueAmount,
         storeId: currentStore.id
       });
     } else {
       if (totalCost > 0 && !editingProduct) {
-        onAddExpense({
+        const expResult = await onAddExpense({
           storeId: currentStore.id,
           category: "Operational Cost",
           amount: totalCost,
           description: `Cash purchase for new stock: ${productName} (${quantity} units)`
         });
+        if (expResult && expResult.id) generatedExpenseId = expResult.id;
       } else if (matchedProduct && totalCost > 0) {
-        onAddExpense({
+        const expResult = await onAddExpense({
           storeId: currentStore.id,
           category: "Operational Cost",
           amount: totalCost,
           description: `Restock cash purchase: ${productName} (+${quantity} units)`
         });
+        if (expResult && expResult.id) generatedExpenseId = expResult.id;
       }
+    }
+
+    if (generatedExpenseId && finalProductId && !editingProduct) {
+      onUpdate(finalProductId, { linkedExpenseId: generatedExpenseId });
     }
     
     setShowSuccessToast(true);
@@ -439,11 +545,11 @@ const Inventory: React.FC<InventoryProps> = ({
                     <td className="px-6 py-5 text-right">
                       <div className="flex items-center justify-end gap-2">
                         <button onClick={() => handleCreateBarcode(p)} className="p-2.5 text-slate-500 hover:text-amber-400 hover:bg-amber-400/10 rounded-xl transition-all" title="Create Barcode"><QrCode className="w-4 h-4" /></button>
-                        {currentUser.role !== UserRole.SALESMAN && (
-                          <button onClick={() => { setEditingProduct(p); setScannedSku(p.sku); setMatchedProduct(p); setIsRegistrationActive(true); }} className="p-2.5 text-slate-500 hover:text-white hover:bg-slate-800 rounded-xl transition-all"><Edit2 className="w-4 h-4" /></button>
+                        {canEditPrices && (
+                          <button onClick={() => handleEditAsset(p)} className="p-2.5 text-slate-500 hover:text-white hover:bg-slate-800 rounded-xl transition-all"><Edit2 className="w-4 h-4" /></button>
                         )}
                         {canDelete && (
-                          <button onClick={() => onDelete(p.id)} className="p-2.5 text-slate-500 hover:text-rose-500 hover:bg-rose-500/10 rounded-xl transition-all"><Trash2 className="w-4 h-4" /></button>
+                          <button onClick={() => handleDeleteAsset(p)} className="p-2.5 text-slate-500 hover:text-rose-500 hover:bg-rose-500/10 rounded-xl transition-all"><Trash2 className="w-4 h-4" /></button>
                         )}
                       </div>
                     </td>
@@ -479,7 +585,6 @@ const Inventory: React.FC<InventoryProps> = ({
           </div>
         )}
         
-        {/* 🔴 বারকোড মডাল রেন্ডার করা হলো 🔴 */}
         <BarcodeModal />
       </div>
     );
@@ -613,6 +718,8 @@ const Inventory: React.FC<InventoryProps> = ({
                   type="number" 
                   step="0.01" 
                   defaultValue={0}
+                  onWheel={(e) => (e.target as HTMLInputElement).blur()} 
+                  onFocus={(e) => e.target.select()}
                   className="w-full px-5 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-emerald-400 font-black focus:border-amber-400" 
                 />
               </div>
@@ -622,11 +729,11 @@ const Inventory: React.FC<InventoryProps> = ({
               <div className="grid grid-cols-2 gap-4 animate-in slide-in-from-bottom-2">
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-rose-500 uppercase tracking-[0.2em] ml-2">Add Stock (Vol)</label>
-                  <input name="pNewQty" type="number" required autoFocus placeholder="+Volume" className="w-full px-5 py-4 bg-slate-800 border border-rose-500/50 rounded-2xl outline-none text-white font-black focus:border-rose-500 amber-glow shadow-[0_0_20px_rgba(244,63,94,0.1)]" />
+                  <input name="pNewQty" type="number" required autoFocus placeholder="+Volume" onWheel={(e) => (e.target as HTMLInputElement).blur()} onFocus={(e) => e.target.select()} className="w-full px-5 py-4 bg-slate-800 border border-rose-500/50 rounded-2xl outline-none text-white font-black focus:border-rose-500 amber-glow shadow-[0_0_20px_rgba(244,63,94,0.1)]" />
                 </div>
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Unit Cost ($)</label>
-                  <input name="pBuyingPrice" type="number" step="0.01" required defaultValue={matchedProduct.buyingPrice} className="w-full px-5 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-emerald-400 font-black focus:border-amber-400" />
+                  <input name="pBuyingPrice" type="number" step="0.01" required defaultValue={matchedProduct.buyingPrice} onWheel={(e) => (e.target as HTMLInputElement).blur()} onFocus={(e) => e.target.select()} className="w-full px-5 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-emerald-400 font-black focus:border-amber-400" />
                 </div>
               </div>
             ) : (
@@ -634,21 +741,21 @@ const Inventory: React.FC<InventoryProps> = ({
                 <div className="grid grid-cols-2 gap-4">
                    <div className="space-y-2">
                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Acquisition Cost ($)</label>
-                     <input name="pBuyingPrice" type="number" step="0.01" required defaultValue={editingProduct?.buyingPrice || 0} className="w-full px-5 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-emerald-400 font-black focus:border-amber-400" />
+                     <input name="pBuyingPrice" type="number" step="0.01" required defaultValue={editingProduct?.buyingPrice || 0} onWheel={(e) => (e.target as HTMLInputElement).blur()} onFocus={(e) => e.target.select()} className="w-full px-5 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-emerald-400 font-black focus:border-amber-400" />
                    </div>
                    <div className="space-y-2">
                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Market Price ($)</label>
-                     <input name="pPrice" type="number" step="0.01" required defaultValue={editingProduct?.price || 0} className="w-full px-5 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-amber-400 font-black focus:border-amber-400" />
+                     <input name="pPrice" type="number" step="0.01" required defaultValue={editingProduct?.price || 0} onWheel={(e) => (e.target as HTMLInputElement).blur()} onFocus={(e) => e.target.select()} className="w-full px-5 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-amber-400 font-black focus:border-amber-400" />
                    </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Current Holding</label>
-                    <input name="pQty" type="number" required defaultValue={editingProduct?.quantity || 0} className="w-full px-5 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400" />
+                    <input name="pQty" type="number" required defaultValue={editingProduct?.quantity || 0} onWheel={(e) => (e.target as HTMLInputElement).blur()} onFocus={(e) => e.target.select()} className="w-full px-5 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400" />
                   </div>
                   <div className="space-y-2">
                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Min. Threshold</label>
-                    <input name="pMin" type="number" required defaultValue={editingProduct?.minThreshold || 5} className="w-full px-5 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400" />
+                    <input name="pMin" type="number" required defaultValue={editingProduct?.minThreshold || 5} onWheel={(e) => (e.target as HTMLInputElement).blur()} onFocus={(e) => e.target.select()} className="w-full px-5 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400" />
                   </div>
                 </div>
               </>
@@ -728,9 +835,12 @@ const Inventory: React.FC<InventoryProps> = ({
                          >
                           <QrCode className="w-4 h-4" />
                          </button>
+                         {canEditPrices && (
+                          <button onClick={() => handleEditAsset(p)} className="p-2.5 text-slate-400 hover:text-white transition-colors"><Edit2 className="w-4 h-4" /></button>
+                         )}
                          {canDelete && (
                           <button 
-                            onClick={() => onDelete(p.id)} 
+                            onClick={() => handleDeleteAsset(p)} 
                             className="p-2 text-slate-400 hover:text-rose-500 transition-colors"
                           >
                             <Trash2 className="w-4 h-4" />
@@ -741,31 +851,8 @@ const Inventory: React.FC<InventoryProps> = ({
                     </td>
                   </tr>
                 ))}
-                {filteredProducts.length === 0 && (
-                  <tr>
-                    <td colSpan={3} className="px-6 py-20 text-center opacity-30 grayscale">
-                       <LayoutDashboard className="w-12 h-12 mx-auto text-slate-600 mb-4" />
-                       <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">No matching assets found</p>
-                    </td>
-                  </tr>
-                )}
               </tbody>
            </table>
-        </div>
-
-        <div className="p-8 bg-slate-950 border-t border-slate-800">
-           <div className="flex items-center justify-between">
-              <div>
-                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Store Equity</p>
-                <p className="text-2xl font-black text-white">
-                  ${filteredProducts.reduce((acc, p) => acc + (p.quantity * p.price), 0).toLocaleString()}
-                </p>
-              </div>
-              <div className="flex flex-col items-end">
-                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Total Assets</p>
-                <p className="text-2xl font-black text-amber-400">{filteredProducts.length}</p>
-              </div>
-           </div>
         </div>
       </div>
 
@@ -781,7 +868,6 @@ const Inventory: React.FC<InventoryProps> = ({
         }
       `}</style>
 
-      {/* 🔴 বারকোড মডাল রেন্ডার করা হলো 🔴 */}
       <BarcodeModal />
     </div>
   );

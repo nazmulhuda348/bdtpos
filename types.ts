@@ -59,6 +59,7 @@ export interface Product {
   minThreshold: number;
   storeId: string;
   lastUpdated: string;
+  linkedExpenseId?: string; // 🔴 নতুন যুক্ত করা হলো
 }
 
 export interface Sale {

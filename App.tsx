@@ -186,10 +186,18 @@ const App: React.FC = () => {
     if (data) setSales(prev => [data, ...prev]);
   }, [currentStore?.id, products]);
 
-  const addProduct = useCallback(async (newProduct: Omit<Product, 'id' | 'lastUpdated'>) => {
-    const { data } = await supabase.from('products').insert([{ ...newProduct, storeId: currentStore?.id }]).select().single();
-    if (data) setProducts(prev => [...prev, data]);
-  }, [currentStore?.id]);
+  // App.tsx এর addProduct ফাংশনটি পরিবর্তন করুন
+const addProduct = useCallback(async (newProduct: Omit<Product, 'id' | 'lastUpdated'>) => {
+  const { data, error } = await supabase.from('products')
+    .insert([{ ...newProduct, storeId: currentStore?.id }])
+    .select().single();
+    
+  if (data) {
+    setProducts(prev => [...prev, data]);
+    return data; // এই লাইনটি যোগ করুন যাতে নতুন ID পাওয়া যায়
+  }
+  return null;
+}, [currentStore?.id]);
 
   const updateProduct = useCallback(async (id: string, updates: Partial<Product>) => {
     const { data } = await supabase.from('products').update(updates).eq('id', id).select().single();
@@ -203,7 +211,11 @@ const App: React.FC = () => {
 
   const addExpense = useCallback(async (expense: Omit<Expense, 'id' | 'timestamp'>) => {
     const { data } = await supabase.from('expenses').insert([{ ...expense, storeId: currentStore?.id }]).select().single();
-    if (data) setExpenses(prev => [data, ...prev]);
+    if (data) {
+      setExpenses(prev => [data, ...prev]);
+      return data; // 🔴 এই লাইনটি যুক্ত করা হলো যাতে Inventory.tsx আইডিটি পায়
+    }
+    return null;
   }, [currentStore?.id]);
 
   const updateExpense = useCallback(async (id: string, updates: Partial<Expense>) => {
@@ -253,15 +265,36 @@ const App: React.FC = () => {
   }, [currentStore?.id]);
 
   const deleteProduct = useCallback(async (id: string) => {
-    if (!window.confirm("Delete this product? All related stock will be removed.")) return;
+    if (!window.confirm("Delete this product? All related stock will be removed and related expenses will be reversed.")) return;
     try {
       const p = products.find(x => x.id === id);
+      
+      // 🔴 New Logic: Find and delete related expenses based on description match 🔴
+      if (p) {
+        // Find expenses that contain the product name and were cash purchases
+        const relatedExpenses = expenses.filter(e => 
+          e.storeId === currentStore?.id && 
+          e.category === "Operational Cost" &&
+          e.description.includes(p.name)
+        );
+
+        // Delete those expenses from the database
+        for (const exp of relatedExpenses) {
+          await supabase.from('expenses').delete().eq('id', exp.id);
+        }
+        
+        // Remove from local state
+        if (relatedExpenses.length > 0) {
+           const expenseIdsToRemove = relatedExpenses.map(e => e.id);
+           setExpenses(prev => prev.filter(e => !expenseIdsToRemove.includes(e.id)));
+        }
+      }
+
       await supabase.from('products').delete().eq('id', id);
       setProducts(prev => prev.filter(p => p.id !== id));
       logActivity(`Deleted product: ${p?.name}`);
     } catch (err: any) { alert(err.message); }
-  }, [products, logActivity]);
-
+  }, [products, expenses, currentStore?.id, logActivity]);
   const deleteCustomer = useCallback(async (id: string) => {
     const customer = customers.find(c => c.id === id);
     if (customer && customer.totalDue > 0) return alert(`Action Denied: Clear dues ($${customer.totalDue}) first!`);
@@ -536,11 +569,11 @@ const App: React.FC = () => {
         <Suspense fallback={<div className="min-h-screen bg-slate-950 flex items-center justify-center text-amber-400 font-black tracking-widest uppercase animate-pulse">Loading Module...</div>}>
           <Routes>
             <Route path="/" element={currentUser.role !== UserRole.SALESMAN ? <Dashboard products={products} currentStore={currentStore} sales={sales} expenses={expenses} currentUser={currentUser} activities={activities} /> : <Navigate to="/inventory" replace />} />
-            <Route path="/inventory" element={<Inventory products={products} suppliers={suppliers} currentStore={currentStore} currentUser={currentUser} categories={categories} sales={sales} expenses={expenses} onUpdate={updateProduct} onDelete={deleteProduct} onAdd={addProduct} onAddSale={addSale} onAddExpense={addExpense} onUpdateExpense={updateExpense} onDeleteExpense={deleteExpense} onAddCategory={handleAddCategory} onRemoveCategory={handleRemoveCategory} onUpdateSupplierDue={updateSupplierDue} onAddPurchase={addPurchase} canEditPrices={checkPermission('inventory_edit')} canDelete={checkPermission('inventory_delete')} />} />
+            <Route path="/inventory" element={<Inventory products={products} suppliers={suppliers} purchases={purchases} currentStore={currentStore} currentUser={currentUser} categories={categories} sales={sales} expenses={expenses} onUpdate={updateProduct} onDelete={deleteProduct} onAdd={addProduct} onAddSale={addSale} onAddExpense={addExpense} onUpdateExpense={updateExpense} onDeleteExpense={deleteExpense} onAddCategory={handleAddCategory} onRemoveCategory={handleRemoveCategory} onUpdateSupplierDue={updateSupplierDue} onAddPurchase={addPurchase} canEditPrices={checkPermission('inventory_edit')} canDelete={checkPermission('inventory_delete')} />} />
             <Route path="/sales" element={<Sales sales={sales} products={products} customers={customers} expenses={expenses} currentStore={currentStore} currentUser={currentUser} onAddSale={addSale} onUpdateSale={updateSale} onUpdateStock={updateProduct} onUpdateCustomerDue={updateCustomerDue} onDeleteSale={deleteSale} canDelete={checkPermission('sales_delete')} />} />
             <Route path="/customers" element={<Customers customers={customers} currentStore={currentStore} onAddCustomer={addCustomer} onUpdateCustomer={updateCustomer} onDeleteCustomer={deleteCustomer} onAddSale={addSale} onUpdateCustomerDue={updateCustomerDue} canEdit={checkPermission('customers_edit')} canDelete={checkPermission('customers_delete')} />} />
             <Route path="/suppliers" element={<Suppliers suppliers={suppliers} currentStore={currentStore} onAddSupplier={addSupplier} onUpdateSupplier={updateSupplier} onDeleteSupplier={deleteSupplier} onAddExpense={addExpense} onUpdateSupplierDue={updateSupplierDue} canEdit={checkPermission('suppliers_edit')} canDelete={checkPermission('suppliers_delete')} />} />
-            <Route path="/purchases" element={<Purchases purchases={purchases} suppliers={suppliers} products={products} currentStore={currentStore} onAddPurchase={addPurchase} onUpdateStock={updateProduct} onUpdateSupplierDue={updateSupplierDue} onDeletePurchase={deletePurchase} canDelete={checkPermission('purchase_delete')} />} />
+            <Route path="/purchases" element={<Purchases purchases={purchases} suppliers={suppliers} products={products} currentStore={currentStore} onAddPurchase={addPurchase} onUpdateStock={updateProduct} onUpdateSupplierDue={updateSupplierDue} onDeletePurchase={deletePurchase} onAddExpense={addExpense} canDelete={checkPermission('purchase_delete')} />} />
             <Route path="/expenses" element={currentUser.role !== UserRole.SALESMAN ? <Expenses expenses={expenses} currentStore={currentStore} currentUser={currentUser} expenseCategories={expenseCategories} onAddExpense={addExpense} onUpdateExpense={updateExpense} onDeleteExpense={deleteExpense} onAddExpenseCategory={handleAddExpenseCategory} onRemoveExpenseCategory={handleRemoveExpenseCategory} canEdit={checkPermission('expenses_edit')} canDelete={checkPermission('expenses_delete')} /> : <Navigate to="/inventory" replace />} />
             <Route path="/wastage" element={currentUser.role !== UserRole.SALESMAN ? <Wastage products={products} currentStore={currentStore} expenses={expenses} onUpdateStock={updateProduct} onAddExpense={addExpense} onDeleteExpense={deleteExpense} canDelete={checkPermission('expenses_delete')} /> : <Navigate to="/inventory" replace />} />
             <Route path="/scanner" element={<Scanner products={products} currentStore={currentStore} onUpdate={updateProduct} onAddSale={addSale} />} />
