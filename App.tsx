@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useCallback, Suspense, lazy } from 'react';
+import React, { useState, useEffect, useCallback, Suspense, lazy, useMemo } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { supabase } from './lib/supabase';
 import Layout from './components/Layout';
 import Login from './components/Login';
-import { Store, Product, User, UserRole, Sale, Expense, Customer, Supplier, Purchase, UserPermissions } from './types';
+import { Store, Product, User, UserRole, Sale, Expense, Customer, Supplier, Purchase, UserPermissions, CashTransaction } from './types'; // 🔴 CashTransaction যুক্ত করা হয়েছে
 
-// 🔴 Lazy Loading Imports (পেজগুলোকে ফাস্ট লোড করার জন্য) 🔴
+// 🔴 Lazy Loading Imports
 const Dashboard = lazy(() => import('./components/Dashboard'));
 const Inventory = lazy(() => import('./components/Inventory'));
 const Sales = lazy(() => import('./components/Sales'));
@@ -17,6 +17,7 @@ const Purchases = lazy(() => import('./components/Purchases'));
 const Wastage = lazy(() => import('./components/Wastage'));
 const Scanner = lazy(() => import('./components/Scanner'));
 const Settings = lazy(() => import('./components/Settings'));
+const CashManagement = lazy(() => import('./components/CashManagement')); // 🔴 নতুন Cash Management পেজ
 
 const App: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => localStorage.getItem('omni_auth') === 'true');
@@ -34,6 +35,7 @@ const App: React.FC = () => {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
+  const [cashTransactions, setCashTransactions] = useState<CashTransaction[]>([]); // 🔴 নতুন ফান্ড স্টেট
   
   // 🔴 Loading States 🔴
   const [isDataLoading, setIsDataLoading] = useState(false);
@@ -76,6 +78,7 @@ const App: React.FC = () => {
     setSuppliers([]);
     setPurchases([]);
     setUsers([]);
+    setCashTransactions([]); // 🔴 Reset যুক্ত করা হয়েছে
   }, []);
 
   // 🔴 Initial Metadata Fetch Logic 🔴
@@ -130,14 +133,16 @@ const App: React.FC = () => {
       try {
         const [
           { data: prodData }, { data: salesData }, { data: expData }, 
-          { data: custData }, { data: suppData }, { data: purData }
+          { data: custData }, { data: suppData }, { data: purData },
+          { data: cashTxData } // 🔴 Cash Management Fetch
         ] = await Promise.all([
           supabase.from('products').select('*').eq('storeId', storeId),
           supabase.from('sales').select('*').eq('storeId', storeId).order('timestamp', { ascending: false }),
           supabase.from('expenses').select('*').eq('storeId', storeId).order('timestamp', { ascending: false }),
           supabase.from('customers').select('*').eq('storeId', storeId),
           supabase.from('suppliers').select('*').eq('storeId', storeId),
-          supabase.from('purchases').select('*').eq('storeId', storeId).order('timestamp', { ascending: false })
+          supabase.from('purchases').select('*').eq('storeId', storeId).order('timestamp', { ascending: false }),
+          supabase.from('cash_transactions').select('*').eq('storeId', storeId).order('timestamp', { ascending: false }) // 🔴 New
         ]);
 
         setProducts(prodData || []);
@@ -146,6 +151,7 @@ const App: React.FC = () => {
         setCustomers(custData || []);
         setSuppliers(suppData || []);
         setPurchases(purData || []);
+        setCashTransactions(cashTxData || []); // 🔴 New
 
       } catch (error) {
         console.error("Database Fetch Error:", error);
@@ -174,6 +180,48 @@ const App: React.FC = () => {
     localStorage.setItem('omni_user', JSON.stringify(user));
   };
 
+  // 🔴 Cash Transaction Functions
+  const addCashTransaction = useCallback(async (transaction: Omit<CashTransaction, 'id' | 'timestamp'>) => {
+    const { data } = await supabase.from('cash_transactions').insert([{ ...transaction, storeId: currentStore?.id }]).select().single();
+    if (data) {
+      setCashTransactions(prev => [data, ...prev]);
+      logActivity(`Logged Fund Transfer: ${transaction.type}`);
+    }
+  }, [currentStore?.id, logActivity]);
+
+  const deleteCashTransaction = useCallback(async (id: string) => {
+    if (!window.confirm("Delete this transaction? Balances will be reverted automatically.")) return;
+    try {
+      await supabase.from('cash_transactions').delete().eq('id', id);
+      setCashTransactions(prev => prev.filter(t => t.id !== id));
+      logActivity(`Deleted Fund Transaction`);
+    } catch (err: any) { alert(`Failed: ${err.message}`); }
+  }, [logActivity]);
+
+  // 🔴 ব্যালেন্স ক্যালকুলেশন (CashManagement পেজে পাঠানোর জন্য)
+  const { netBalance, bankBalance } = useMemo(() => {
+    if (!currentStore) return { netBalance: 0, bankBalance: 0 };
+    
+    const initialInvestment = parseFloat(localStorage.getItem(`omni_invest_${currentStore.id}`) || '0');
+    let totalCashIn = 0, totalExpense = 0;
+    
+    sales.filter(s => s.storeId === currentStore.id && !s.invoiceId?.startsWith('VOID-')).forEach(s => totalCashIn += (s.amountPaid || 0));
+    expenses.filter(e => e.storeId === currentStore.id && e.category !== 'Wastage').forEach(e => totalExpense += e.amount);
+
+    let totalBankDeposit = 0, totalBankWithdrawal = 0, totalCashOutFromCash = 0, totalCashOutFromBank = 0;
+    cashTransactions.filter(t => t.storeId === currentStore.id).forEach(t => {
+      if (t.type === 'BANK_DEPOSIT') totalBankDeposit += t.amount;
+      if (t.type === 'BANK_WITHDRAWAL') totalBankWithdrawal += t.amount;
+      if (t.type === 'CASH_OUT' && t.source === 'CASH') totalCashOutFromCash += t.amount;
+      if (t.type === 'CASH_OUT' && t.source === 'BANK') totalCashOutFromBank += t.amount;
+    });
+
+    const calculatedNetBalance = (totalCashIn + initialInvestment + totalBankWithdrawal) - (totalExpense + totalBankDeposit + totalCashOutFromCash);
+    const calculatedBankBalance = totalBankDeposit - (totalBankWithdrawal + totalCashOutFromBank);
+
+    return { netBalance: calculatedNetBalance, bankBalance: calculatedBankBalance };
+  }, [sales, expenses, cashTransactions, currentStore?.id]);
+
   const addSale = useCallback(async (sale: Omit<Sale, 'id' | 'timestamp'>) => {
     if (!sale.invoiceId?.startsWith('PAY-') && sale.productId !== 'PAYMENT_RECEIVED') {
       const product = products.find(p => p.id === sale.productId);
@@ -186,18 +234,14 @@ const App: React.FC = () => {
     if (data) setSales(prev => [data, ...prev]);
   }, [currentStore?.id, products]);
 
-  // App.tsx এর addProduct ফাংশনটি পরিবর্তন করুন
-const addProduct = useCallback(async (newProduct: Omit<Product, 'id' | 'lastUpdated'>) => {
-  const { data, error } = await supabase.from('products')
-    .insert([{ ...newProduct, storeId: currentStore?.id }])
-    .select().single();
-    
-  if (data) {
-    setProducts(prev => [...prev, data]);
-    return data; // এই লাইনটি যোগ করুন যাতে নতুন ID পাওয়া যায়
-  }
-  return null;
-}, [currentStore?.id]);
+  const addProduct = useCallback(async (newProduct: Omit<Product, 'id' | 'lastUpdated'>) => {
+    const { data } = await supabase.from('products').insert([{ ...newProduct, storeId: currentStore?.id }]).select().single();
+    if (data) {
+      setProducts(prev => [...prev, data]);
+      return data; 
+    }
+    return null;
+  }, [currentStore?.id]);
 
   const updateProduct = useCallback(async (id: string, updates: Partial<Product>) => {
     const { data } = await supabase.from('products').update(updates).eq('id', id).select().single();
@@ -213,7 +257,7 @@ const addProduct = useCallback(async (newProduct: Omit<Product, 'id' | 'lastUpda
     const { data } = await supabase.from('expenses').insert([{ ...expense, storeId: currentStore?.id }]).select().single();
     if (data) {
       setExpenses(prev => [data, ...prev]);
-      return data; // 🔴 এই লাইনটি যুক্ত করা হলো যাতে Inventory.tsx আইডিটি পায়
+      return data; 
     }
     return null;
   }, [currentStore?.id]);
@@ -268,33 +312,26 @@ const addProduct = useCallback(async (newProduct: Omit<Product, 'id' | 'lastUpda
     if (!window.confirm("Delete this product? All related stock will be removed and related expenses will be reversed.")) return;
     try {
       const p = products.find(x => x.id === id);
-      
-      // 🔴 New Logic: Find and delete related expenses based on description match 🔴
       if (p) {
-        // Find expenses that contain the product name and were cash purchases
         const relatedExpenses = expenses.filter(e => 
           e.storeId === currentStore?.id && 
           e.category === "Operational Cost" &&
           e.description.includes(p.name)
         );
-
-        // Delete those expenses from the database
         for (const exp of relatedExpenses) {
           await supabase.from('expenses').delete().eq('id', exp.id);
         }
-        
-        // Remove from local state
         if (relatedExpenses.length > 0) {
            const expenseIdsToRemove = relatedExpenses.map(e => e.id);
            setExpenses(prev => prev.filter(e => !expenseIdsToRemove.includes(e.id)));
         }
       }
-
       await supabase.from('products').delete().eq('id', id);
       setProducts(prev => prev.filter(p => p.id !== id));
       logActivity(`Deleted product: ${p?.name}`);
     } catch (err: any) { alert(err.message); }
   }, [products, expenses, currentStore?.id, logActivity]);
+
   const deleteCustomer = useCallback(async (id: string) => {
     const customer = customers.find(c => c.id === id);
     if (customer && customer.totalDue > 0) return alert(`Action Denied: Clear dues ($${customer.totalDue}) first!`);
@@ -565,10 +602,13 @@ const addProduct = useCallback(async (newProduct: Omit<Product, 'id' | 'lastUpda
     <HashRouter>
       <Layout currentUser={currentUser} currentStore={currentStore} stores={stores} onStoreChange={setCurrentStore} users={users} onUserChange={setCurrentUser} products={products} onLogout={handleLogout}>
         
-        {/* 🔴 Suspense Added Here 🔴 */}
         <Suspense fallback={<div className="min-h-screen bg-slate-950 flex items-center justify-center text-amber-400 font-black tracking-widest uppercase animate-pulse">Loading Module...</div>}>
           <Routes>
-            <Route path="/" element={currentUser.role !== UserRole.SALESMAN ? <Dashboard products={products} currentStore={currentStore} sales={sales} expenses={expenses} currentUser={currentUser} activities={activities} /> : <Navigate to="/inventory" replace />} />
+            <Route path="/" element={currentUser.role !== UserRole.SALESMAN ? <Dashboard products={products} currentStore={currentStore} sales={sales} expenses={expenses} currentUser={currentUser} activities={activities} cashTransactions={cashTransactions} /> : <Navigate to="/inventory" replace />} />
+            
+            {/* 🔴 নতুন Fund Management Route */}
+            <Route path="/funds" element={currentUser.role !== UserRole.SALESMAN ? <CashManagement currentStore={currentStore} transactions={cashTransactions} netBalance={netBalance} bankBalance={bankBalance} onAddTransaction={addCashTransaction} onDeleteTransaction={deleteCashTransaction} canEdit={checkPermission('expenses_edit')} /> : <Navigate to="/" replace />} />
+
             <Route path="/inventory" element={<Inventory products={products} suppliers={suppliers} purchases={purchases} currentStore={currentStore} currentUser={currentUser} categories={categories} sales={sales} expenses={expenses} onUpdate={updateProduct} onDelete={deleteProduct} onAdd={addProduct} onAddSale={addSale} onAddExpense={addExpense} onUpdateExpense={updateExpense} onDeleteExpense={deleteExpense} onAddCategory={handleAddCategory} onRemoveCategory={handleRemoveCategory} onUpdateSupplierDue={updateSupplierDue} onAddPurchase={addPurchase} canEditPrices={checkPermission('inventory_edit')} canDelete={checkPermission('inventory_delete')} />} />
             <Route path="/sales" element={<Sales sales={sales} products={products} customers={customers} expenses={expenses} currentStore={currentStore} currentUser={currentUser} onAddSale={addSale} onUpdateSale={updateSale} onUpdateStock={updateProduct} onUpdateCustomerDue={updateCustomerDue} onDeleteSale={deleteSale} canDelete={checkPermission('sales_delete')} />} />
             <Route path="/customers" element={<Customers customers={customers} currentStore={currentStore} onAddCustomer={addCustomer} onUpdateCustomer={updateCustomer} onDeleteCustomer={deleteCustomer} onAddSale={addSale} onUpdateCustomerDue={updateCustomerDue} canEdit={checkPermission('customers_edit')} canDelete={checkPermission('customers_delete')} />} />

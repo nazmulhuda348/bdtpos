@@ -132,3 +132,15 @@ export interface InventoryStats {
   totalExpenses: number;
   totalProfit: number;
 }
+export type TransactionType = 'BANK_DEPOSIT' | 'BANK_WITHDRAWAL' | 'CASH_OUT';
+export type PaymentSource = 'CASH' | 'BANK';
+
+export interface CashTransaction {
+  id: string;
+  storeId: string;
+  type: TransactionType;
+  source: PaymentSource; // Cash Out এর সময় টাকাটা ক্যাশ থেকে যাচ্ছে নাকি ব্যাংক থেকে
+  amount: number;
+  description: string;
+  timestamp: string;
+}

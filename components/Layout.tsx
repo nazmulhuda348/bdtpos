@@ -75,6 +75,7 @@ const Layout: React.FC<LayoutProps> = ({
     { name: 'Scanner', path: '/scanner', icon: ScanLine, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER, 'STORE_OWNER' as UserRole, UserRole.SALESMAN] },
     { name: 'User Control', path: '/users', icon: UsersIcon, permission: 'user_control_access' as keyof UserPermissions, roles: [UserRole.SUPER_ADMIN] },
     { name: 'Settings', path: '/settings', icon: Settings, permission: 'settings_access' as keyof UserPermissions, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER, 'STORE_OWNER' as UserRole, UserRole.SALESMAN] },
+    { name: 'Fund Management', path: '/funds', icon: Wallet, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER, 'STORE_OWNER'] },
   ].filter(item => {
     if (currentUser.role === UserRole.SUPER_ADMIN) return true;
     if (item.permission && !currentUser.permissions?.[item.permission]) return false;

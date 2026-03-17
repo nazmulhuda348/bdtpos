@@ -1,10 +1,10 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Product, Store, Sale, Expense, User, UserRole } from '../types';
+import { Product, Store, Sale, Expense, User, UserRole, CashTransaction } from '../types';
 import { supabase } from '../lib/supabase';
 import { 
   DollarSign, TrendingUp, Package, AlertTriangle, ShoppingCart, 
   Zap, Wallet, LayoutDashboard, Check, Calendar, CreditCard, 
-  QrCode, X, CheckCircle2, Clock, Activity, Edit2 
+  QrCode, X, CheckCircle2, Clock, Activity, Edit2, Building2 
 } from 'lucide-react';
 
 interface DashboardProps {
@@ -14,16 +14,25 @@ interface DashboardProps {
   expenses: Expense[];
   currentUser: User;
   activities?: any[];
+  cashTransactions?: CashTransaction[]; // নতুন Cash Management এর ডাটা
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ products, currentStore, sales, expenses, currentUser, activities = [] }) => {
+const Dashboard: React.FC<DashboardProps> = ({ 
+  products, 
+  currentStore, 
+  sales, 
+  expenses, 
+  currentUser, 
+  activities = [],
+  cashTransactions = [] // ডিফল্ট এম্পটি অ্যারে
+}) => {
 
   const [selectedMonth, setSelectedMonth] = useState<string>(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
 
-  // 🔴 Initial Investment State (সম্পূর্ণ নতুন যোগ করা হয়েছে, অন্য কিছুতে প্রভাব ফেলবে না) 🔴
+  // Initial Investment State
   const [initialInvestment, setInitialInvestment] = useState<number>(() => {
     const saved = localStorage.getItem(`omni_invest_${currentStore.id}`);
     return saved ? parseFloat(saved) : 0;
@@ -53,7 +62,6 @@ const Dashboard: React.FC<DashboardProps> = ({ products, currentStore, sales, ex
 
   const bKashNumber = "01633334466"; 
 
-  // আপনার অরিজিনাল বিকাশ লজিক - এখানে আমি কোনো হাত দিইনি
   const getCheckableMonths = () => {
     const months = [];
     const now = new Date();
@@ -73,7 +81,6 @@ const Dashboard: React.FC<DashboardProps> = ({ products, currentStore, sales, ex
 
   const relevantMonths = getCheckableMonths();
 
-  // আপনার অরিজিনাল useEffect - এখানেও কোনো হাত দিইনি (Flickering হবে না)
   useEffect(() => {
     const fetchPaymentStatus = async () => {
       setIsLoadingStatus(true);
@@ -122,10 +129,14 @@ const Dashboard: React.FC<DashboardProps> = ({ products, currentStore, sales, ex
     return { totalItems: storeProducts.length, stockEquity, lowStockCount, storeProducts };
   }, [products, currentStore.id]);
 
+  // 🔴 আপডেট করা হিসাব-নিকাশ (Cash Management যুক্ত করা হয়েছে)
   const monthStats = useMemo(() => {
     const filteredSales = sales.filter(s => s.storeId === currentStore.id && (!selectedMonth || s.timestamp.startsWith(selectedMonth)) && !s.invoiceId?.startsWith('VOID-'));
     const filteredExpenses = expenses.filter(e => e.storeId === currentStore.id && (!selectedMonth || e.timestamp.startsWith(selectedMonth)));
+    const filteredCashTx = cashTransactions.filter(t => t.storeId === currentStore.id && (!selectedMonth || t.timestamp.startsWith(selectedMonth)));
+
     let totalSales = 0, totalCashIn = 0, totalProfit = 0, totalExpense = 0, wastageLoss = 0;
+    
     filteredSales.forEach(s => {
       const isPayment = s.invoiceId?.startsWith('PAY-') || s.productId === 'PAYMENT_RECEIVED';
       totalCashIn += (s.amountPaid || 0);
@@ -135,11 +146,36 @@ const Dashboard: React.FC<DashboardProps> = ({ products, currentStore, sales, ex
         totalProfit += (s.totalPrice - ((product ? product.buyingPrice : s.buyingPrice) * s.quantity));
       }
     });
+    
     filteredExpenses.forEach(e => e.category === 'Wastage' ? wastageLoss += e.amount : totalExpense += e.amount);
     
-    // 🔴 শুধু এখানে initialInvestment যোগ করে দিয়েছি Net Balance এর জন্য 🔴
-    return { totalSales, totalProfit: totalProfit - wastageLoss, totalExpense, netBalance: totalCashIn + initialInvestment - totalExpense };
-  }, [sales, products, expenses, currentStore.id, selectedMonth, initialInvestment]);
+    // নতুন ফান্ড ট্রানজেকশনের হিসাব
+    let totalBankDeposit = 0;
+    let totalBankWithdrawal = 0;
+    let totalCashOutFromCash = 0;
+    let totalCashOutFromBank = 0;
+
+    filteredCashTx.forEach(t => {
+      if (t.type === 'BANK_DEPOSIT') totalBankDeposit += t.amount;
+      if (t.type === 'BANK_WITHDRAWAL') totalBankWithdrawal += t.amount;
+      if (t.type === 'CASH_OUT' && t.source === 'CASH') totalCashOutFromCash += t.amount;
+      if (t.type === 'CASH_OUT' && t.source === 'BANK') totalCashOutFromBank += t.amount;
+    });
+
+    // Net Balance (Cash in Hand) = (ইনকাম + ইনভেস্টমেন্ট + ব্যাংক থেকে তোলা) - (খরচ + ব্যাংকে জমা + ক্যাশ থেকে আউট)
+    const netBalance = (totalCashIn + initialInvestment + totalBankWithdrawal) - (totalExpense + totalBankDeposit + totalCashOutFromCash);
+    
+    // Bank Balance = (ব্যাংকে জমা) - (ব্যাংক থেকে তোলা + ব্যাংক থেকে আউট)
+    const bankBalance = totalBankDeposit - (totalBankWithdrawal + totalCashOutFromBank);
+
+    return { 
+      totalSales, 
+      totalProfit: totalProfit - wastageLoss, 
+      totalExpense, 
+      netBalance,
+      bankBalance
+    };
+  }, [sales, products, expenses, cashTransactions, currentStore.id, selectedMonth, initialInvestment]);
 
   const lowStockList = inventoryStats.storeProducts.filter(p => p.quantity <= p.minThreshold);
 
@@ -151,7 +187,7 @@ const Dashboard: React.FC<DashboardProps> = ({ products, currentStore, sales, ex
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
       
-      {/* আপনার অরিজিনাল বিকাশ সেকশন */}
+      {/* bKash Section */}
       {currentUser.role !== UserRole.SUPER_ADMIN && (
         <>
           {isLoadingStatus ? (
@@ -191,7 +227,7 @@ const Dashboard: React.FC<DashboardProps> = ({ products, currentStore, sales, ex
         </>
       )}
 
-      {/* 🔴 এখানে শুধু Initial Capital এর বক্সটি বসানো হয়েছে 🔴 */}
+      {/* Header and Controls */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
         <div>
           <h1 className="text-3xl font-black text-white tracking-tight flex items-center gap-3">Command Center</h1>
@@ -199,7 +235,6 @@ const Dashboard: React.FC<DashboardProps> = ({ products, currentStore, sales, ex
         </div>
         
         <div className="flex flex-wrap items-center gap-4">
-          
           <div className="flex items-center gap-3 bg-slate-900 border border-slate-800 p-2 pl-4 rounded-2xl shadow-xl">
             <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Initial Capital:</span>
             {isEditingInvest ? (
@@ -229,26 +264,45 @@ const Dashboard: React.FC<DashboardProps> = ({ products, currentStore, sales, ex
             <Calendar className="w-5 h-5 text-slate-400 ml-2" />
             <input type="month" value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)} className="bg-transparent text-white font-bold outline-none cursor-pointer pr-4" />
           </div>
-
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="bg-slate-900/50 p-6 rounded-[2.5rem] border border-slate-800 shadow-xl flex items-center gap-5">
-          <div className="w-14 h-14 bg-slate-800 rounded-2xl flex items-center justify-center text-slate-400"><ShoppingCart className="w-6 h-6" /></div>
-          <div><p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Total Sales</p><h3 className="text-2xl font-black text-white">${monthStats.totalSales.toLocaleString()}</h3></div>
+      {/* 🔴 আপডেট করা 5-কলাম মেট্রিক্স গ্রিড */}
+      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
+        <div className="bg-slate-900/50 p-6 rounded-[2.5rem] border border-slate-800 shadow-xl flex flex-col justify-center">
+          <div className="flex items-center gap-4 mb-2">
+            <div className="w-10 h-10 bg-slate-800 rounded-2xl flex items-center justify-center text-slate-400"><ShoppingCart className="w-5 h-5" /></div>
+            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Total Sales</p>
+          </div>
+          <h3 className="text-2xl font-black text-white">${monthStats.totalSales.toLocaleString()}</h3>
         </div>
-        <div className="bg-slate-900/50 p-6 rounded-[2.5rem] border border-slate-800 shadow-xl flex items-center gap-5">
-          <div className="w-14 h-14 bg-rose-400/10 rounded-2xl flex items-center justify-center text-rose-400"><Zap className="w-6 h-6" /></div>
-          <div><p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Total Expense</p><h3 className="text-2xl font-black text-rose-400">${monthStats.totalExpense.toLocaleString()}</h3></div>
+        <div className="bg-slate-900/50 p-6 rounded-[2.5rem] border border-slate-800 shadow-xl flex flex-col justify-center">
+          <div className="flex items-center gap-4 mb-2">
+            <div className="w-10 h-10 bg-rose-400/10 rounded-2xl flex items-center justify-center text-rose-400"><Zap className="w-5 h-5" /></div>
+            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Total Expense</p>
+          </div>
+          <h3 className="text-2xl font-black text-rose-400">${monthStats.totalExpense.toLocaleString()}</h3>
         </div>
-        <div className="bg-slate-900/50 p-6 rounded-[2.5rem] border border-slate-800 shadow-xl flex items-center gap-5">
-          <div className="w-14 h-14 bg-emerald-400/10 rounded-2xl flex items-center justify-center text-emerald-400"><TrendingUp className="w-6 h-6" /></div>
-          <div><p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Total Profit</p><h3 className="text-2xl font-black text-emerald-400">${monthStats.totalProfit.toLocaleString()}</h3></div>
+        <div className="bg-slate-900/50 p-6 rounded-[2.5rem] border border-slate-800 shadow-xl flex flex-col justify-center">
+          <div className="flex items-center gap-4 mb-2">
+            <div className="w-10 h-10 bg-emerald-400/10 rounded-2xl flex items-center justify-center text-emerald-400"><TrendingUp className="w-5 h-5" /></div>
+            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Total Profit</p>
+          </div>
+          <h3 className="text-2xl font-black text-emerald-400">${monthStats.totalProfit.toLocaleString()}</h3>
         </div>
-        <div className="bg-slate-900/50 p-6 rounded-[2.5rem] border border-slate-800 shadow-xl flex items-center gap-5">
-          <div className="w-14 h-14 bg-blue-400/10 rounded-2xl flex items-center justify-center text-blue-400"><Wallet className="w-6 h-6" /></div>
-          <div><p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Net Balance</p><h3 className="text-2xl font-black text-blue-400">${monthStats.netBalance.toLocaleString()}</h3></div>
+        <div className="bg-slate-900/50 p-6 rounded-[2.5rem] border border-slate-800 shadow-xl flex flex-col justify-center">
+          <div className="flex items-center gap-4 mb-2">
+            <div className="w-10 h-10 bg-blue-400/10 rounded-2xl flex items-center justify-center text-blue-400"><Wallet className="w-5 h-5" /></div>
+            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Cash in Hand</p>
+          </div>
+          <h3 className="text-2xl font-black text-blue-400">${monthStats.netBalance.toLocaleString()}</h3>
+        </div>
+        <div className="bg-slate-900/50 p-6 rounded-[2.5rem] border border-slate-800 shadow-xl flex flex-col justify-center">
+          <div className="flex items-center gap-4 mb-2">
+            <div className="w-10 h-10 bg-cyan-400/10 rounded-2xl flex items-center justify-center text-cyan-400"><Building2 className="w-5 h-5" /></div>
+            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Bank Balance</p>
+          </div>
+          <h3 className="text-2xl font-black text-cyan-400">${monthStats.bankBalance.toLocaleString()}</h3>
         </div>
       </div>
 
