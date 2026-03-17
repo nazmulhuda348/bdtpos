@@ -180,12 +180,33 @@ const App: React.FC = () => {
     localStorage.setItem('omni_user', JSON.stringify(user));
   };
 
-  // 🔴 Cash Transaction Functions
+  // 🔴 Cash Transaction Functions (Optimistic Update)
   const addCashTransaction = useCallback(async (transaction: Omit<CashTransaction, 'id' | 'timestamp'>) => {
-    const { data } = await supabase.from('cash_transactions').insert([{ ...transaction, storeId: currentStore?.id }]).select().single();
-    if (data) {
-      setCashTransactions(prev => [data, ...prev]);
-      logActivity(`Logged Fund Transfer: ${transaction.type}`);
+    // ১. তাৎক্ষণিক UI আপডেটের জন্য একটি টেম্পোরারি ডাটা তৈরি (যাতে রিফ্রেশ দিতে না হয়)
+    const tempTransaction: CashTransaction = {
+      ...transaction,
+      id: `temp-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      storeId: currentStore?.id || '',
+      amount: Number(transaction.amount) // নিশ্চিত করা হচ্ছে যে এটি Number
+    };
+
+    // ২. ডাটাবেসের জন্য অপেক্ষা না করেই চোখের পলকে স্ক্রিনের ব্যালেন্স আপডেট করে দেওয়া
+    setCashTransactions(prev => [tempTransaction, ...prev]);
+
+    // ৩. ব্যাকগ্রাউন্ডে ডাটাবেসে সেভ করা
+    try {
+      const { data, error } = await supabase.from('cash_transactions').insert([{ ...transaction, storeId: currentStore?.id }]).select().single();
+      
+      if (data) {
+        // ডাটাবেস থেকে আসল ডাটা আসলে সেটা দিয়ে টেম্পোরারি ডাটাটি রিপ্লেস করে দেওয়া
+        setCashTransactions(prev => prev.map(t => t.id === tempTransaction.id ? { ...data, amount: Number(data.amount) } : t));
+        logActivity(`Logged Fund Transfer: ${transaction.type}`);
+      }
+    } catch (err: any) {
+      // কোনো কারণে ইন্টারনেটের সমস্যায় ফেইল করলে ব্যালেন্স আবার আগের অবস্থায় ফিরিয়ে নেওয়া
+      setCashTransactions(prev => prev.filter(t => t.id !== tempTransaction.id));
+      console.error("Transaction Error:", err);
     }
   }, [currentStore?.id, logActivity]);
 
@@ -197,23 +218,25 @@ const App: React.FC = () => {
       logActivity(`Deleted Fund Transaction`);
     } catch (err: any) { alert(`Failed: ${err.message}`); }
   }, [logActivity]);
-
-  // 🔴 ব্যালেন্স ক্যালকুলেশন (CashManagement পেজে পাঠানোর জন্য)
+// 🔴 ব্যালেন্স ক্যালকুলেশন (CashManagement পেজে পাঠানোর জন্য)
   const { netBalance, bankBalance } = useMemo(() => {
     if (!currentStore) return { netBalance: 0, bankBalance: 0 };
     
     const initialInvestment = parseFloat(localStorage.getItem(`omni_invest_${currentStore.id}`) || '0');
     let totalCashIn = 0, totalExpense = 0;
     
-    sales.filter(s => s.storeId === currentStore.id && !s.invoiceId?.startsWith('VOID-')).forEach(s => totalCashIn += (s.amountPaid || 0));
-    expenses.filter(e => e.storeId === currentStore.id && e.category !== 'Wastage').forEach(e => totalExpense += e.amount);
+    sales.filter(s => s.storeId === currentStore.id && !s.invoiceId?.startsWith('VOID-')).forEach(s => totalCashIn += Number(s.amountPaid || 0));
+    expenses.filter(e => e.storeId === currentStore.id && e.category !== 'Wastage').forEach(e => totalExpense += Number(e.amount || 0));
 
     let totalBankDeposit = 0, totalBankWithdrawal = 0, totalCashOutFromCash = 0, totalCashOutFromBank = 0;
+    
     cashTransactions.filter(t => t.storeId === currentStore.id).forEach(t => {
-      if (t.type === 'BANK_DEPOSIT') totalBankDeposit += t.amount;
-      if (t.type === 'BANK_WITHDRAWAL') totalBankWithdrawal += t.amount;
-      if (t.type === 'CASH_OUT' && t.source === 'CASH') totalCashOutFromCash += t.amount;
-      if (t.type === 'CASH_OUT' && t.source === 'BANK') totalCashOutFromBank += t.amount;
+      // 🔴 নিশ্চিত করা হচ্ছে ডাটাবেস থেকে যাই আসুক না কেন, এটা Number হিসেবেই যোগ হবে
+      const amt = Number(t.amount || 0); 
+      if (t.type === 'BANK_DEPOSIT') totalBankDeposit += amt;
+      if (t.type === 'BANK_WITHDRAWAL') totalBankWithdrawal += amt;
+      if (t.type === 'CASH_OUT' && t.source === 'CASH') totalCashOutFromCash += amt;
+      if (t.type === 'CASH_OUT' && t.source === 'BANK') totalCashOutFromBank += amt;
     });
 
     const calculatedNetBalance = (totalCashIn + initialInvestment + totalBankWithdrawal) - (totalExpense + totalBankDeposit + totalCashOutFromCash);
