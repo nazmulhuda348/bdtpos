@@ -14,7 +14,9 @@ interface DashboardProps {
   expenses: Expense[];
   currentUser: User;
   activities?: any[];
-  cashTransactions?: CashTransaction[]; // নতুন Cash Management এর ডাটা
+  cashTransactions?: CashTransaction[];
+  initialInvestment: number; // 🔴 নতুন প্রপস
+  onUpdateInvestment: (val: number) => void; // 🔴 নতুন প্রপস
 }
 
 const Dashboard: React.FC<DashboardProps> = ({ 
@@ -24,7 +26,9 @@ const Dashboard: React.FC<DashboardProps> = ({
   expenses, 
   currentUser, 
   activities = [],
-  cashTransactions = [] // ডিফল্ট এম্পটি অ্যারে
+  cashTransactions = [],
+  initialInvestment,
+  onUpdateInvestment
 }) => {
 
   const [selectedMonth, setSelectedMonth] = useState<string>(() => {
@@ -32,25 +36,17 @@ const Dashboard: React.FC<DashboardProps> = ({
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
 
-  // Initial Investment State
-  const [initialInvestment, setInitialInvestment] = useState<number>(() => {
-    const saved = localStorage.getItem(`omni_invest_${currentStore.id}`);
-    return saved ? parseFloat(saved) : 0;
-  });
   const [isEditingInvest, setIsEditingInvest] = useState(false);
   const [investInput, setInvestInput] = useState(initialInvestment.toString());
 
+  // 🔴 Props থেকে ডাটা আসলে ইনপুট ফিল্ড আপডেট হবে
   useEffect(() => {
-    const saved = localStorage.getItem(`omni_invest_${currentStore.id}`);
-    const val = saved ? parseFloat(saved) : 0;
-    setInitialInvestment(val);
-    setInvestInput(val.toString());
-  }, [currentStore.id]);
+    setInvestInput(initialInvestment.toString());
+  }, [initialInvestment]);
 
   const handleSaveInvestment = () => {
     const val = parseFloat(investInput) || 0;
-    setInitialInvestment(val);
-    localStorage.setItem(`omni_invest_${currentStore.id}`, val.toString());
+    onUpdateInvestment(val); // 🔴 App.tsx কে আপডেট করতে বলা হচ্ছে
     setIsEditingInvest(false);
   };
 
@@ -129,7 +125,6 @@ const Dashboard: React.FC<DashboardProps> = ({
     return { totalItems: storeProducts.length, stockEquity, lowStockCount, storeProducts };
   }, [products, currentStore.id]);
 
-  // 🔴 আপডেট করা হিসাব-নিকাশ (Cash Management যুক্ত করা হয়েছে)
   const monthStats = useMemo(() => {
     const filteredSales = sales.filter(s => s.storeId === currentStore.id && (!selectedMonth || s.timestamp.startsWith(selectedMonth)) && !s.invoiceId?.startsWith('VOID-'));
     const filteredExpenses = expenses.filter(e => e.storeId === currentStore.id && (!selectedMonth || e.timestamp.startsWith(selectedMonth)));
@@ -149,11 +144,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     
     filteredExpenses.forEach(e => e.category === 'Wastage' ? wastageLoss += e.amount : totalExpense += e.amount);
     
-    // নতুন ফান্ড ট্রানজেকশনের হিসাব
-    let totalBankDeposit = 0;
-    let totalBankWithdrawal = 0;
-    let totalCashOutFromCash = 0;
-    let totalCashOutFromBank = 0;
+    let totalBankDeposit = 0, totalBankWithdrawal = 0, totalCashOutFromCash = 0, totalCashOutFromBank = 0;
 
     filteredCashTx.forEach(t => {
       if (t.type === 'BANK_DEPOSIT') totalBankDeposit += t.amount;
@@ -162,10 +153,8 @@ const Dashboard: React.FC<DashboardProps> = ({
       if (t.type === 'CASH_OUT' && t.source === 'BANK') totalCashOutFromBank += t.amount;
     });
 
-    // Net Balance (Cash in Hand) = (ইনকাম + ইনভেস্টমেন্ট + ব্যাংক থেকে তোলা) - (খরচ + ব্যাংকে জমা + ক্যাশ থেকে আউট)
+    // 🔴 initialInvestment প্রপসটি এখানে ব্যবহার করা হচ্ছে
     const netBalance = (totalCashIn + initialInvestment + totalBankWithdrawal) - (totalExpense + totalBankDeposit + totalCashOutFromCash);
-    
-    // Bank Balance = (ব্যাংকে জমা) - (ব্যাংক থেকে তোলা + ব্যাংক থেকে আউট)
     const bankBalance = totalBankDeposit - (totalBankWithdrawal + totalCashOutFromBank);
 
     return { 
@@ -187,7 +176,6 @@ const Dashboard: React.FC<DashboardProps> = ({
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
       
-      {/* bKash Section */}
       {currentUser.role !== UserRole.SUPER_ADMIN && (
         <>
           {isLoadingStatus ? (
@@ -227,7 +215,6 @@ const Dashboard: React.FC<DashboardProps> = ({
         </>
       )}
 
-      {/* Header and Controls */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
         <div>
           <h1 className="text-3xl font-black text-white tracking-tight flex items-center gap-3">Command Center</h1>
@@ -267,7 +254,6 @@ const Dashboard: React.FC<DashboardProps> = ({
         </div>
       </div>
 
-      {/* 🔴 আপডেট করা 5-কলাম মেট্রিক্স গ্রিড */}
       <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
         <div className="bg-slate-900/50 p-6 rounded-[2.5rem] border border-slate-800 shadow-xl flex flex-col justify-center">
           <div className="flex items-center gap-4 mb-2">
