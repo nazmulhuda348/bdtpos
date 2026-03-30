@@ -358,10 +358,31 @@ const Sales: React.FC<SalesProps> = ({
     return sessionSales.reduce((acc, curr) => acc + curr.totalPrice, 0);
   }, [sessionSales]);
 
+ // 🔴 Updated todayStats logic for accurate local timezone calculations
   const todayStats = useMemo(() => {
-    const today = new Date().toISOString().split('T')[0];
-    const todaySales = sales.filter(s => s.storeId === currentStore.id && s.timestamp.startsWith(today) && !s.invoiceId?.startsWith('VOID-'));
-    const todayExpenses = expenses.filter(e => e.storeId === currentStore.id && e.timestamp.startsWith(today));
+    // ১. লোকাল টাইমজোন অনুযায়ী আজকের ডেট বের করা হচ্ছে
+    const todayDate = new Date();
+    
+    // ২. ডাটাবেসের ডেট আজকের ডেটের সাথে মিলে কি না তা চেক করার ফাংশন
+    const isToday = (dateString: string) => {
+      if (!dateString) return false;
+      const d = new Date(dateString);
+      return d.getDate() === todayDate.getDate() &&
+             d.getMonth() === todayDate.getMonth() &&
+             d.getFullYear() === todayDate.getFullYear();
+    };
+
+    // ৩. শুধুমাত্র আজকের সেলস এবং এক্সপেন্স ফিল্টার করা
+    const todaySales = sales.filter(s => 
+      s.storeId === currentStore.id && 
+      isToday(s.timestamp) && 
+      !s.invoiceId?.startsWith('VOID-')
+    );
+    
+    const todayExpenses = expenses.filter(e => 
+      e.storeId === currentStore.id && 
+      isToday(e.timestamp)
+    );
     
     let totalSales = 0;
     let todayCash = 0;
@@ -369,33 +390,39 @@ const Sales: React.FC<SalesProps> = ({
     let totalExpense = 0;
     let wastageLoss = 0;
 
+    // ৪. আজকের সেলস থেকে হিসাব বের করা
     todaySales.forEach(s => {
       const isPayment = s.invoiceId?.startsWith('PAY-') || s.productId === 'PAYMENT_RECEIVED' || s.productId === 'SUPPLIER_PAYMENT';
-      todayCash += (s.amountPaid || 0);
+      
+      // Number() ব্যবহার করে নিশ্চিত করা হচ্ছে যে এটি সংখ্যা হিসেবেই যোগ হবে
+      todayCash += Number(s.amountPaid || 0);
 
       if (!isPayment) {
-        totalSales += s.totalPrice;
+        totalSales += Number(s.totalPrice || 0);
+        
         const product = products.find(p => p.id === s.productId);
-        const buyingPrice = product ? product.buyingPrice : s.buyingPrice;
-        const cost = buyingPrice * s.quantity;
-        totalProfit += (s.totalPrice - cost);
+        const buyingPrice = Number(product ? product.buyingPrice : (s.buyingPrice || 0));
+        const cost = buyingPrice * Number(s.quantity || 0);
+        
+        totalProfit += (Number(s.totalPrice || 0) - cost);
       }
     });
 
+    // ৫. আজকের এক্সপেন্স বা খরচ হিসাব করা
     todayExpenses.forEach(e => {
       if (e.category === 'Wastage') {
-         wastageLoss += e.amount;
+         wastageLoss += Number(e.amount || 0);
       } else {
-         totalExpense += e.amount;
+         totalExpense += Number(e.amount || 0);
       }
     });
 
+    // ৬. চূড়ান্ত হিসাব তৈরি
     totalProfit -= wastageLoss; 
     const netBalance = todayCash - totalExpense;
 
     return { totalSales, todayCash, totalProfit, totalExpense, netBalance };
   }, [sales, products, expenses, currentStore.id]);
-
   const exportToCSV = () => {
     const headers = ['Invoice', 'Customer', 'Product', 'Qty', 'Unit Price', 'Discount', 'Total', 'Paid', 'Due', 'Date'];
     const data = sales
