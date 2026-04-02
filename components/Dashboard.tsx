@@ -6,6 +6,7 @@ import {
   Zap, Wallet, LayoutDashboard, Check, Calendar, CreditCard, 
   QrCode, X, CheckCircle2, Clock, Activity, Edit2, Building2 
 } from 'lucide-react';
+import Swal from 'sweetalert2'; // 🔴 SweetAlert2 ইমপোর্ট
 
 interface DashboardProps {
   products: Product[];
@@ -15,20 +16,13 @@ interface DashboardProps {
   currentUser: User;
   activities?: any[];
   cashTransactions?: CashTransaction[];
-  initialInvestment: number; // 🔴 নতুন প্রপস
-  onUpdateInvestment: (val: number) => void; // 🔴 নতুন প্রপস
+  initialInvestment: number; 
+  onUpdateInvestment: (val: number) => void; 
 }
 
 const Dashboard: React.FC<DashboardProps> = ({ 
-  products, 
-  currentStore, 
-  sales, 
-  expenses, 
-  currentUser, 
-  activities = [],
-  cashTransactions = [],
-  initialInvestment,
-  onUpdateInvestment
+  products, currentStore, sales, expenses, currentUser, activities = [],
+  cashTransactions = [], initialInvestment, onUpdateInvestment
 }) => {
 
   const [selectedMonth, setSelectedMonth] = useState<string>(() => {
@@ -39,14 +33,13 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [isEditingInvest, setIsEditingInvest] = useState(false);
   const [investInput, setInvestInput] = useState(initialInvestment.toString());
 
-  // 🔴 Props থেকে ডাটা আসলে ইনপুট ফিল্ড আপডেট হবে
   useEffect(() => {
     setInvestInput(initialInvestment.toString());
   }, [initialInvestment]);
 
   const handleSaveInvestment = () => {
     const val = parseFloat(investInput) || 0;
-    onUpdateInvestment(val); // 🔴 App.tsx কে আপডেট করতে বলা হচ্ছে
+    onUpdateInvestment(val); 
     setIsEditingInvest(false);
   };
 
@@ -87,34 +80,58 @@ const Dashboard: React.FC<DashboardProps> = ({
     fetchPaymentStatus();
   }, [currentStore.id]);
 
+  // 🔴 RestoAccrue Billing Logic 🔴
   const targetMonthData = useMemo(() => {
-    for (const month of relevantMonths) {
-      const records = paymentHistory.filter(p => p.monthYear === month);
-      const [y, m] = month.split('-').map(Number);
-      const monthName = new Date(y, m - 1, 1).toLocaleString('default', { month: 'long', year: 'numeric' });
-      const hasPaid = records.some(p => p.status === 'PAID');
-      if (hasPaid) continue;
-      const pendingRecord = records.find(p => p.status === 'PENDING');
-      if (pendingRecord) return { monthYear: month, status: 'PENDING', record: pendingRecord, monthName };
-      return { monthYear: month, status: 'DUE', record: null, monthName };
+    let pendingCount = 0;
+    let monthsDue = 0;
+    let totalDue = 0;
+    let targetMonthToPay = relevantMonths[relevantMonths.length - 1]; // Default to latest
+
+    if (currentStore.billingStartMonth && currentStore.monthlyFee) {
+      const paidCount = paymentHistory.filter(p => p.status === 'PAID').length;
+      pendingCount = paymentHistory.filter(p => p.status === 'PENDING').length;
+      monthsDue = relevantMonths.length - paidCount;
+      if (monthsDue < 0) monthsDue = 0;
+      totalDue = monthsDue * currentStore.monthlyFee;
     }
-    const lastMonth = relevantMonths[relevantMonths.length - 1];
-    const [y, m] = lastMonth.split('-').map(Number);
-    return { monthYear: lastMonth, status: 'PAID', record: null, monthName: new Date(y, m - 1, 1).toLocaleString('default', { month: 'long', year: 'numeric' }) };
-  }, [paymentHistory, relevantMonths]);
+
+    // Find the oldest unpaid month for the payment modal reference
+    for (const month of relevantMonths) {
+      const hasPaid = paymentHistory.some(p => p.monthYear === month && p.status === 'PAID');
+      if (!hasPaid) {
+        targetMonthToPay = month;
+        break;
+      }
+    }
+
+    let status = 'PAID';
+    if (monthsDue > 0) status = 'DUE';
+    if (pendingCount > 0) status = 'PENDING';
+
+    return { status, monthsDue, totalDue, targetMonthToPay };
+  }, [paymentHistory, relevantMonths, currentStore]);
 
   const submitPaymentTrx = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!trxId.trim()) return;
     setIsSubmitting(true);
     try {
-      const payload = { storeId: currentStore.id, monthYear: targetMonthData.monthYear, amountPaid: currentStore.monthlyFee || 0, paymentDate: new Date().toISOString(), trxId: trxId.trim(), status: 'PENDING' };
+      const payload = { 
+        storeId: currentStore.id, 
+        monthYear: targetMonthData.targetMonthToPay, 
+        amountPaid: currentStore.monthlyFee || 0, 
+        paymentDate: new Date().toISOString(), 
+        trxId: trxId.trim(), 
+        status: 'PENDING' 
+      };
       const { data, error } = await supabase.from('store_payments').insert([payload]).select().single();
       if (error) throw error;
       setPaymentHistory(prev => [...prev, data]);
       setIsPaymentModalOpen(false);
-      alert(`Payment submitted for ${targetMonthData.monthName}!`);
-    } catch (error: any) { alert(`Submission failed: ${error.message}`); } 
+      Swal.fire({ icon: 'success', title: 'Payment Submitted!', text: 'Your payment is pending approval.', customClass: { popup: 'rounded-[2rem]' } });
+    } catch (error: any) { 
+      Swal.fire({ icon: 'error', title: 'Submission Failed', text: error.message, customClass: { popup: 'rounded-[2rem]' } });
+    } 
     finally { setIsSubmitting(false); setTrxId(''); }
   };
 
@@ -153,7 +170,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       if (t.type === 'CASH_OUT' && t.source === 'BANK') totalCashOutFromBank += t.amount;
     });
 
-    // 🔴 initialInvestment প্রপসটি এখানে ব্যবহার করা হচ্ছে
     const netBalance = (totalCashIn + initialInvestment + totalBankWithdrawal) - (totalExpense + totalBankDeposit + totalCashOutFromCash);
     const bankBalance = totalBankDeposit - (totalBankWithdrawal + totalCashOutFromBank);
 
@@ -167,7 +183,6 @@ const Dashboard: React.FC<DashboardProps> = ({
   }, [sales, products, expenses, cashTransactions, currentStore.id, selectedMonth, initialInvestment]);
 
   const lowStockList = inventoryStats.storeProducts.filter(p => p.quantity <= p.minThreshold);
-
   const todaysActivities = useMemo(() => {
     const today = new Date().toISOString().split('T')[0];
     return activities.filter(a => a.timestamp.startsWith(today)).slice(0, 10);
@@ -193,16 +208,16 @@ const Dashboard: React.FC<DashboardProps> = ({
                 <div>
                   <h2 className="text-xl font-black text-white tracking-tight">Software Subscription</h2>
                   <p className={`text-xs font-bold mt-1 uppercase tracking-widest ${targetMonthData.status === 'PAID' ? 'text-emerald-400' : targetMonthData.status === 'PENDING' ? 'text-amber-400' : 'text-rose-500'}`}>
-                    {targetMonthData.status === 'PAID' ? `PAID FOR ${targetMonthData.monthName}` : 
-                     targetMonthData.status === 'PENDING' ? `PENDING FOR ${targetMonthData.monthName}` : 
-                     `DUE FOR ${targetMonthData.monthName}`}
+                    {targetMonthData.status === 'PAID' ? 'ALL CLEARED' : 
+                     targetMonthData.status === 'PENDING' ? 'PENDING APPROVAL' : 
+                     `${targetMonthData.monthsDue} MONTH(S) DUE (Total: $${targetMonthData.totalDue})`}
                   </p>
                 </div>
               </div>
 
               {targetMonthData.status === 'DUE' ? (
                 <button onClick={() => setIsPaymentModalOpen(true)} className="bg-rose-500 hover:bg-rose-600 text-white px-8 py-4 rounded-[2rem] font-black uppercase tracking-widest text-xs shadow-lg shadow-rose-500/20 transition-all flex items-center gap-2">
-                  <CreditCard className="w-5 h-5" /> Pay Bill (${currentStore.monthlyFee || 0})
+                  <CreditCard className="w-5 h-5" /> Pay 1 Month (${currentStore.monthlyFee || 0})
                 </button>
               ) : (
                 <div className={`px-6 py-3 rounded-2xl font-black text-xs uppercase tracking-widest border flex items-center gap-2 ${targetMonthData.status === 'PAID' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-amber-400/20 text-amber-400 border-amber-400/30'}`}>
@@ -215,6 +230,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         </>
       )}
 
+      {/* বাকি চার্ট ও ড্যাশবোর্ড লজিক হুবহু রাখা হলো */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
         <div>
           <h1 className="text-3xl font-black text-white tracking-tight flex items-center gap-3">Command Center</h1>

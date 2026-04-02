@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Store, User, StorePayment } from '../types';
+import { Store, User, StorePayment, UserRole } from '../types';
 import { supabase } from '../lib/supabase';
 import { 
   Settings as SettingsIcon, Store as StoreIcon, CreditCard, Lock, Plus, 
   Trash2, Edit2, X, AlertCircle, CheckCircle2, CalendarClock, Clock, RefreshCw, Download, Upload 
 } from 'lucide-react';
+import Swal from 'sweetalert2'; 
 
 interface SettingsProps {
   stores: Store[];
@@ -21,7 +22,7 @@ interface SettingsProps {
   canEditStores: boolean;
 }
 
-const Settings: React.FC<SettingsProps> = ({ stores, currentUser, setStores, setCurrentUser, onDeleteStore, onDownloadBackup, onRestoreBackup, canEditStores }) => {
+const Settings: React.FC<SettingsProps> = ({ stores, currentUser, users, setStores, setCurrentUser, onDeleteStore, onDownloadBackup, onRestoreBackup, canEditStores }) => {
   const [activeTab, setActiveTab] = useState<'hubs' | 'billing' | 'security'>('hubs');
   const [isStoreModalOpen, setIsStoreModalOpen] = useState(false);
   const [editingStore, setEditingStore] = useState<Store | null>(null);
@@ -69,36 +70,56 @@ const Settings: React.FC<SettingsProps> = ({ stores, currentUser, setStores, set
         if (error) throw error;
         if (data) {
           setStores(prev => prev.map(s => s.id === editingStore.id ? data : s));
-          alert("Store updated successfully.");
+          Swal.fire({ icon: 'success', title: 'Updated!', text: 'Store updated successfully.', timer: 1500, showConfirmButton: false, customClass: { popup: 'rounded-[2rem]' } });
         }
       } else {
         const { data, error } = await supabase.from('stores').insert([storePayload]).select().single();
         if (error) throw error;
         if (data) {
           setStores(prev => [...prev, data]);
-          alert("New store registered.");
+          Swal.fire({ icon: 'success', title: 'Registered!', text: 'New store registered.', timer: 1500, showConfirmButton: false, customClass: { popup: 'rounded-[2rem]' } });
         }
       }
       setIsStoreModalOpen(false);
     } catch (error: any) {
-      alert(`Operation failed: ${error.message}`);
+      Swal.fire({ icon: 'error', title: 'Error', text: error.message, customClass: { popup: 'rounded-[2rem]' } });
     } finally {
       setIsLoading(false);
     }
   };
 
-  // 🔴 Download Confirmation 🔴
   const handleDownloadClick = async (storeId: string, storeName: string) => {
-    if(window.confirm(`আপনি কি "${storeName}" এর ডেটা ডাউনলোড (Backup) করতে চান?`)) {
+    const result = await Swal.fire({
+      title: 'Download Backup?',
+      text: `Do you want to download backup for "${storeName}"?`,
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonColor: '#f59e0b',
+      cancelButtonColor: '#94a3b8',
+      confirmButtonText: 'Yes, Download',
+      customClass: { popup: 'rounded-[2rem]' }
+    });
+
+    if(result.isConfirmed) {
       setBackingUpStoreId(storeId);
       await onDownloadBackup(storeId, storeName);
       setBackingUpStoreId(null);
     }
   };
 
-  // 🔴 Upload Confirmation & Trigger 🔴
-  const handleUploadClick = (storeId: string, storeName: string) => {
-    if(window.confirm(`⚠️ সতর্কতা! আপনি "${storeName}" স্টোরের আগের ডেটা রিস্টোর (Upload) করতে যাচ্ছেন।\n\nএতে করে বর্তমান ইনভেন্টরি, কাস্টমার এবং সাপ্লায়ারের বর্তমান ডেটা ওভাররাইট হয়ে যাবে। আপনি কি নিশ্চিত?`)) {
+  const handleUploadClick = async (storeId: string, storeName: string) => {
+    const result = await Swal.fire({
+      title: '⚠️ Warning!',
+      text: `Restoring data for "${storeName}" will overwrite current inventory. Are you sure?`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#ef4444',
+      cancelButtonColor: '#94a3b8',
+      confirmButtonText: 'Yes, Restore',
+      customClass: { popup: 'rounded-[2rem]' }
+    });
+
+    if(result.isConfirmed) {
         document.getElementById(`backup-upload-${storeId}`)?.click();
     }
   };
@@ -107,25 +128,25 @@ const Settings: React.FC<SettingsProps> = ({ stores, currentUser, setStores, set
     const file = e.target.files?.[0];
     if (!file) return;
     await onRestoreBackup(storeId, storeName, file);
-    e.target.value = ''; // Reset file input
+    e.target.value = ''; 
   };
 
   const handleApprovePayment = async (paymentId: string) => {
-    if (!window.confirm("Approve this transaction?")) return;
-    const { data } = await supabase.from('store_payments').update({ status: 'PAID' }).eq('id', paymentId).select().single();
-    if (data) {
-      setPayments(prev => prev.map(p => p.id === paymentId ? data : p));
-      alert("Payment Approved!");
-    }
+    const result = await Swal.fire({ title: 'Approve Payment?', icon: 'question', showCancelButton: true, confirmButtonColor: '#10b981', customClass: { popup: 'rounded-[2rem]' } });
+    if (!result.isConfirmed) return;
+    
+    setPayments(prev => prev.map(p => p.id === paymentId ? { ...p, status: 'PAID' } : p));
+    await supabase.from('store_payments').update({ status: 'PAID' }).eq('id', paymentId);
+    Swal.fire({ icon: 'success', title: 'Approved', timer: 1000, showConfirmButton: false, customClass: { popup: 'rounded-[2rem]' } });
   };
 
   const handleRejectPayment = async (paymentId: string) => {
-    if (!window.confirm("Reject this transaction?")) return;
-    const { data } = await supabase.from('store_payments').update({ status: 'REJECTED' }).eq('id', paymentId).select().single();
-    if (data) {
-      setPayments(prev => prev.map(p => p.id === paymentId ? data : p));
-      alert("Payment Rejected!");
-    }
+    const result = await Swal.fire({ title: 'Reject Payment?', icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', customClass: { popup: 'rounded-[2rem]' } });
+    if (!result.isConfirmed) return;
+
+    setPayments(prev => prev.map(p => p.id === paymentId ? { ...p, status: 'REJECTED' } : p));
+    await supabase.from('store_payments').update({ status: 'REJECTED' }).eq('id', paymentId);
+    Swal.fire({ icon: 'info', title: 'Rejected', timer: 1000, showConfirmButton: false, customClass: { popup: 'rounded-[2rem]' } });
   };
 
   const handlePasswordUpdate = async (e: React.FormEvent) => {
@@ -138,10 +159,10 @@ const Settings: React.FC<SettingsProps> = ({ stores, currentUser, setStores, set
       const { error } = await supabase.from('users').update({ password: passwordData.new }).eq('id', currentUser.id);
       if (error) throw error;
       setCurrentUser({ ...currentUser, password: passwordData.new });
-      alert("Password updated successfully!");
+      Swal.fire({ icon: 'success', title: 'Password Updated!', timer: 1500, showConfirmButton: false, customClass: { popup: 'rounded-[2rem]' } });
       setPasswordData({ current: '', new: '', confirm: '' });
     } catch (error: any) {
-      alert(`Failed to update password: ${error.message}`);
+      Swal.fire({ icon: 'error', title: 'Error', text: error.message, customClass: { popup: 'rounded-[2rem]' } });
     } finally {
       setIsUpdatingPassword(false);
     }
@@ -190,21 +211,18 @@ const Settings: React.FC<SettingsProps> = ({ stores, currentUser, setStores, set
                 </div>
                 {canEditStores && (
                   <div className="flex justify-end gap-2 pt-4 border-t border-slate-700/50">
-                    
-                    {/* 🔴 Download Backup Button 🔴 */}
-                    <button onClick={() => handleDownloadClick(store.id, store.name)} disabled={backingUpStoreId === store.id} title={`Download Backup for ${store.name}`} className="p-2 text-slate-400 hover:text-emerald-400 transition-colors">
+                    <button onClick={() => handleDownloadClick(store.id, store.name)} disabled={backingUpStoreId === store.id} className="p-2 text-slate-400 hover:text-emerald-400 transition-colors">
                       {backingUpStoreId === store.id ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
                     </button>
-
-                    {/* 🔴 Upload Backup Button 🔴 */}
-                    <button onClick={() => handleUploadClick(store.id, store.name)} title={`Restore Backup to ${store.name}`} className="p-2 text-slate-400 hover:text-blue-400 transition-colors">
+                    <button onClick={() => handleUploadClick(store.id, store.name)} className="p-2 text-slate-400 hover:text-blue-400 transition-colors">
                       <Upload className="w-4 h-4" />
                     </button>
-                    {/* 🔴 Hidden File Input for Upload 🔴 */}
                     <input type="file" id={`backup-upload-${store.id}`} accept=".json" className="hidden" onChange={(e) => handleFileChange(e, store.id, store.name)} />
-
                     <button onClick={() => { setEditingStore(store); setIsStoreModalOpen(true); }} className="p-2 text-slate-400 hover:text-amber-400 transition-colors"><Edit2 className="w-4 h-4" /></button>
-                    <button onClick={() => onDeleteStore(store.id)} className="p-2 text-slate-400 hover:text-rose-500 transition-colors"><Trash2 className="w-4 h-4" /></button>
+                    <button onClick={async () => {
+                       const res = await Swal.fire({title: 'Delete Store?', icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', customClass: {popup: 'rounded-[2rem]'}});
+                       if(res.isConfirmed) onDeleteStore(store.id);
+                    }} className="p-2 text-slate-400 hover:text-rose-500 transition-colors"><Trash2 className="w-4 h-4" /></button>
                   </div>
                 )}
               </div>
@@ -269,12 +287,16 @@ const Settings: React.FC<SettingsProps> = ({ stores, currentUser, setStores, set
             </div>
             
             <div className="overflow-x-auto">
-              <table className="w-full text-left">
+              <table className="w-full text-left whitespace-nowrap">
                 <thead>
                   <tr className="text-[10px] font-black text-slate-500 uppercase tracking-widest border-b border-slate-800">
                     <th className="px-6 py-5">Store Name</th>
+                    <th className="px-6 py-5">Owner Name</th>
+                    <th className="px-6 py-5">Phone</th>
                     <th className="px-6 py-5 text-center">Monthly Fee</th>
-                    <th className="px-6 py-5 text-center">Status</th>
+                    <th className="px-6 py-5 text-center text-rose-400">Due Months</th>
+                    <th className="px-6 py-5 text-center text-rose-400">Total Due</th>
+                    <th className="px-6 py-5 text-center">Current Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/50">
@@ -284,10 +306,38 @@ const Settings: React.FC<SettingsProps> = ({ stores, currentUser, setStores, set
                     const isPending = storePayments.some(p => p.status === 'PENDING');
                     const status = isPaid ? 'PAID' : (isPending ? 'PENDING' : 'DUE');
                     
+                    // 🔴 100% Perfect Match Logic for assignedStoreId 🔴
+                    const storeUser = users?.find(u => 
+                      String((u as any).assignedStoreId) === String(store.id) && 
+                      u.role !== UserRole.SUPER_ADMIN
+                    );
+                    
+                    const ownerName = storeUser?.name || 'Not Set';
+                    const ownerPhone = storeUser?.phone || 'Not Set';
+
+                    let monthsDue = 0;
+                    let totalDue = 0;
+                    if (store.billingStartMonth && store.monthlyFee) {
+                      const [startYear, startMonth] = store.billingStartMonth.split('-').map(Number);
+                      const [currYear, currMonth] = currentMonthYear.split('-').map(Number);
+                      const totalMonthsActive = (currYear - startYear) * 12 + (currMonth - startMonth) + 1;
+                      
+                      if (totalMonthsActive > 0) {
+                        const paidMonthsCount = payments.filter(p => p.storeId === store.id && p.status === 'PAID').length;
+                        monthsDue = totalMonthsActive - paidMonthsCount;
+                        if (monthsDue < 0) monthsDue = 0;
+                        totalDue = monthsDue * store.monthlyFee;
+                      }
+                    }
+
                     return (
                       <tr key={store.id} className="hover:bg-slate-800/20 transition-colors">
                         <td className="px-6 py-5 font-bold text-white text-sm">{store.name}</td>
+                        <td className="px-6 py-5 font-semibold text-slate-300 text-sm">{ownerName}</td>
+                        <td className="px-6 py-5 font-semibold text-slate-300 text-sm">{ownerPhone}</td>
                         <td className="px-6 py-5 text-center font-black text-slate-300">${store.monthlyFee || 0}</td>
+                        <td className="px-6 py-5 text-center font-black text-rose-400">{monthsDue} Month(s)</td>
+                        <td className="px-6 py-5 text-center font-black text-rose-500">${totalDue}</td>
                         <td className="px-6 py-5 text-center">
                            {status === 'PAID' && <span className="bg-emerald-500/20 text-emerald-400 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest border border-emerald-500/30 inline-block w-24">PAID</span>}
                            {status === 'PENDING' && <span className="bg-amber-400/20 text-amber-400 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest border border-amber-400/30 inline-block w-24">PENDING</span>}
