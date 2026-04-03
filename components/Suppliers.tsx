@@ -11,9 +11,10 @@ import {
   Edit2,
   Download,
   Briefcase,
-  X // lucide-react থেকে X ইমপোর্ট করা হয়েছে
+  X 
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import Swal from 'sweetalert2';
 
 interface SuppliersProps {
   suppliers: Supplier[];
@@ -43,9 +44,8 @@ const Suppliers: React.FC<SuppliersProps> = ({
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
   const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
-  const [isLoading, setIsLoading] = useState(false); // লোডিং স্টেট
+  const [isLoading, setIsLoading] = useState(false); 
 
-  // Form State
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [address, setAddress] = useState('');
@@ -71,7 +71,7 @@ const Suppliers: React.FC<SuppliersProps> = ({
     try {
       if (editingSupplier) {
         await onUpdateSupplier(editingSupplier.id, { name, phone, address });
-        alert('Registry Updated: Vendor profile synchronized.');
+        Swal.fire({ icon: 'success', title: 'Updated!', text: 'Vendor profile synchronized.', timer: 1500, showConfirmButton: false, customClass: { popup: 'rounded-[2rem]' } });
       } else {
         await onAddSupplier({
           name,
@@ -80,11 +80,11 @@ const Suppliers: React.FC<SuppliersProps> = ({
           totalDue: 0,
           storeId: currentStore.id
         });
-        alert('Network Expanded: New supplier registered successfully.');
+        Swal.fire({ icon: 'success', title: 'Registered!', text: 'New supplier registered successfully.', timer: 1500, showConfirmButton: false, customClass: { popup: 'rounded-[2rem]' } });
       }
       resetForm();
     } catch (error: any) {
-      alert(`Operation failed: ${error.message}`);
+      Swal.fire({ icon: 'error', title: 'Operation Failed', text: error.message, customClass: { popup: 'rounded-[2rem]' } });
     } finally {
       setIsLoading(false);
     }
@@ -97,7 +97,6 @@ const Suppliers: React.FC<SuppliersProps> = ({
     setIsLoading(true);
 
     try {
-      // ১. ডাটাবেসে খরচের এন্ট্রি হিসেবে সেভ করা হচ্ছে
       await onAddExpense({
         storeId: currentStore.id,
         category: 'Supplier Payment',
@@ -105,15 +104,14 @@ const Suppliers: React.FC<SuppliersProps> = ({
         description: `Settlement payment to: ${selectedSupplier.name}`
       });
 
-      // ২. সাপ্লায়ারের বকেয়া আপডেট করা হচ্ছে
       await onUpdateSupplierDue(selectedSupplier.id, -paymentAmount);
 
-      alert(`Financial Settlement: $${paymentAmount} paid to ${selectedSupplier.name}`);
+      Swal.fire({ icon: 'success', title: 'Payment Sent', text: `$${paymentAmount} paid to ${selectedSupplier.name}`, timer: 2000, showConfirmButton: false, customClass: { popup: 'rounded-[2rem]' } });
       setIsPaymentModalOpen(false);
       setSelectedSupplier(null);
       setPaymentAmount(0);
     } catch (error: any) {
-      alert(`Payment recording failed: ${error.message}`);
+      Swal.fire({ icon: 'error', title: 'Payment Failed', text: error.message, customClass: { popup: 'rounded-[2rem]' } });
     } finally {
       setIsLoading(false);
     }
@@ -279,7 +277,7 @@ const Suppliers: React.FC<SuppliersProps> = ({
                       )}
                       {canDelete && (
                         <button 
-                          onClick={() => { if(window.confirm('Delete vendor? History will remain.')) onDeleteSupplier(supplier.id); }}
+                          onClick={() => onDeleteSupplier(supplier.id)}
                           className="p-2 text-slate-600 hover:text-rose-500 transition-colors"
                         >
                           <Trash2 className="w-4 h-4" />
@@ -295,7 +293,6 @@ const Suppliers: React.FC<SuppliersProps> = ({
       </div>
 
       <AnimatePresence>
-        {/* Supplier Add/Edit Modal */}
         {isModalOpen && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={resetForm} className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm" />
@@ -325,7 +322,6 @@ const Suppliers: React.FC<SuppliersProps> = ({
           </div>
         )}
 
-        {/* Payment Modal */}
         {isPaymentModalOpen && selectedSupplier && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setIsPaymentModalOpen(false)} className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm" />

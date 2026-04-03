@@ -11,9 +11,10 @@ import {
   Edit2,
   Download,
   UserPlus,
-  X // lucide-react থেকে X ইমপোর্ট করা হয়েছে
+  X 
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import Swal from 'sweetalert2';
 
 interface CustomersProps {
   customers: Customer[];
@@ -43,9 +44,8 @@ const Customers: React.FC<CustomersProps> = ({
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
-  const [isLoading, setIsLoading] = useState(false); // লোডিং স্টেট যুক্ত করা হয়েছে
+  const [isLoading, setIsLoading] = useState(false);
 
-  // Form State
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [address, setAddress] = useState('');
@@ -71,7 +71,7 @@ const Customers: React.FC<CustomersProps> = ({
     try {
       if (editingCustomer) {
         await onUpdateCustomer(editingCustomer.id, { name, phone, address });
-        alert('Update Success: Customer profile modified.');
+        Swal.fire({ icon: 'success', title: 'Updated!', text: 'Customer profile modified.', timer: 1500, showConfirmButton: false, customClass: { popup: 'rounded-[2rem]' } });
       } else {
         await onAddCustomer({
           name,
@@ -80,11 +80,11 @@ const Customers: React.FC<CustomersProps> = ({
           totalDue: 0,
           storeId: currentStore.id
         });
-        alert('Registration Success: New customer profile synchronized.');
+        Swal.fire({ icon: 'success', title: 'Registered!', text: 'New customer profile synchronized.', timer: 1500, showConfirmButton: false, customClass: { popup: 'rounded-[2rem]' } });
       }
       resetForm();
     } catch (error: any) {
-      alert(`Operation failed: ${error.message}`);
+      Swal.fire({ icon: 'error', title: 'Operation Failed', text: error.message, customClass: { popup: 'rounded-[2rem]' } });
     } finally {
       setIsLoading(false);
     }
@@ -97,13 +97,11 @@ const Customers: React.FC<CustomersProps> = ({
     setIsLoading(true);
 
     try {
-      // পেমেন্টকে একটি বিক্রয় এন্ট্রি হিসেবে ডাটাবেসে পাঠানো হচ্ছে
-      // productId কে null দেওয়া হয়েছে কারণ এটি কোনো ফিজিক্যাল প্রোডাক্ট নয়
       await onAddSale({
         invoiceId: `PAY-${Date.now().toString().slice(-6)}`,
         customerId: selectedCustomer.id,
         customerName: selectedCustomer.name,
-        productId: null as unknown as string, // UUID এরর এড়াতে null পাঠানো হচ্ছে
+        productId: null as unknown as string, 
         productName: 'Due Payment Received',
         quantity: 1,
         buyingPrice: 0,
@@ -115,15 +113,14 @@ const Customers: React.FC<CustomersProps> = ({
         storeId: currentStore.id
       });
 
-      // কাস্টমারের বকেয়া আপডেট করা হচ্ছে
       await onUpdateCustomerDue(selectedCustomer.id, -paymentAmount);
 
-      alert(`Payment Successful: $${paymentAmount} received from ${selectedCustomer.name}`);
+      Swal.fire({ icon: 'success', title: 'Payment Successful', text: `$${paymentAmount} received from ${selectedCustomer.name}`, timer: 2000, showConfirmButton: false, customClass: { popup: 'rounded-[2rem]' } });
       setIsPaymentModalOpen(false);
       setSelectedCustomer(null);
       setPaymentAmount(0);
     } catch (error: any) {
-      alert(`Payment recording failed: ${error.message}`);
+      Swal.fire({ icon: 'error', title: 'Payment Failed', text: error.message, customClass: { popup: 'rounded-[2rem]' } });
     } finally {
       setIsLoading(false);
     }
@@ -201,7 +198,6 @@ const Customers: React.FC<CustomersProps> = ({
         </div>
       </div>
 
-      {/* Overview Stats */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 flex items-center gap-6 group hover:border-amber-400/30 transition-all">
           <div className="w-14 h-14 bg-amber-400/10 rounded-2xl flex items-center justify-center text-amber-400 group-hover:scale-110 transition-transform">
@@ -275,7 +271,7 @@ const Customers: React.FC<CustomersProps> = ({
                       {customer.totalDue > 0 && (
                         <button 
                           onClick={() => openPaymentModal(customer)}
-                          className="px-3 py-1.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-500 hover:text-white transition-all"
+                          className="px-3 py-1.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-50 hover:text-white transition-all"
                         >
                           Receive Payment
                         </button>
@@ -290,7 +286,7 @@ const Customers: React.FC<CustomersProps> = ({
                       )}
                       {canDelete && (
                         <button 
-                          onClick={() => { if(window.confirm('Erase profile? History remains in sales.')) onDeleteCustomer(customer.id); }}
+                          onClick={() => onDeleteCustomer(customer.id)}
                           className="p-2 text-slate-600 hover:text-rose-500 transition-colors"
                         >
                           <Trash2 className="w-4 h-4" />
@@ -306,7 +302,6 @@ const Customers: React.FC<CustomersProps> = ({
       </div>
 
       <AnimatePresence>
-        {/* Customer Add/Edit Modal */}
         {isModalOpen && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={resetForm} className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm" />
@@ -336,7 +331,6 @@ const Customers: React.FC<CustomersProps> = ({
           </div>
         )}
 
-        {/* Payment Modal */}
         {isPaymentModalOpen && selectedCustomer && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setIsPaymentModalOpen(false)} className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm" />

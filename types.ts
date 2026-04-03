@@ -35,16 +35,18 @@ export interface Store {
   id: string;
   name: string;
   location: string;
-  monthlyFee?: number; // 🔴 মাসিক ফির জন্য নতুন কলাম 🔴
+  monthlyFee?: number; 
+  billingStartMonth?: string;
 }
 
-// 🔴 পেমেন্ট হিস্ট্রি রাখার জন্য নতুন ইন্টারফেস 🔴
 export interface StorePayment {
   id: string;
   storeId: string;
   monthYear: string; 
   amountPaid: number;
   paymentDate: string;
+  trxId?: string;
+  status?: string;
 }
 
 export interface Product {
@@ -59,7 +61,7 @@ export interface Product {
   minThreshold: number;
   storeId: string;
   lastUpdated: string;
-  linkedExpenseId?: string; // 🔴 নতুন যুক্ত করা হলো
+  linkedExpenseId?: string;
 }
 
 export interface Sale {
@@ -76,6 +78,7 @@ export interface Sale {
   totalPrice: number;
   amountPaid: number;
   amountDue: number;
+  paymentMethod?: string; // 🔴 নতুন যুক্ত করা হলো
   timestamp: string;
   storeId: string;
 }
@@ -86,6 +89,7 @@ export interface Expense {
   category: string;
   amount: number;
   description: string;
+  paymentMethod?: string; // 🔴 নতুন যুক্ত করা হলো
   timestamp: string;
 }
 
@@ -132,14 +136,17 @@ export interface InventoryStats {
   totalExpenses: number;
   totalProfit: number;
 }
-export type TransactionType = 'BANK_DEPOSIT' | 'BANK_WITHDRAWAL' | 'CASH_OUT';
-export type PaymentSource = 'CASH' | 'BANK';
+
+// 🔴 পেমেন্ট ট্রানজেকশনের ধরনগুলো আপডেট করা হলো 🔴
+export type TransactionType = 'BANK_DEPOSIT' | 'BANK_WITHDRAWAL' | 'CASH_OUT' | 'TRANSFER';
+export type PaymentSource = 'CASH' | 'BANK' | 'CARD' | 'BKASH' | 'NAGAD';
 
 export interface CashTransaction {
   id: string;
   storeId: string;
   type: TransactionType;
-  source: PaymentSource; // Cash Out এর সময় টাকাটা ক্যাশ থেকে যাচ্ছে নাকি ব্যাংক থেকে
+  source: PaymentSource | string;
+  destination?: PaymentSource | string; // 🔴 নতুন ট্রান্সফারের জন্য
   amount: number;
   description: string;
   timestamp: string;

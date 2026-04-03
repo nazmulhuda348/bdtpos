@@ -4,6 +4,7 @@ import { supabase } from './lib/supabase';
 import Layout from './components/Layout';
 import Login from './components/Login';
 import { Store, Product, User, UserRole, Sale, Expense, Customer, Supplier, Purchase, UserPermissions, CashTransaction } from './types';
+import Swal from 'sweetalert2';
 
 const Dashboard = lazy(() => import('./components/Dashboard'));
 const Inventory = lazy(() => import('./components/Inventory'));
@@ -36,7 +37,6 @@ const App: React.FC = () => {
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [cashTransactions, setCashTransactions] = useState<CashTransaction[]>([]);
   
-  // 🔴 Investment Global State
   const [storeInvestment, setStoreInvestment] = useState<number>(0);
 
   const [isDataLoading, setIsDataLoading] = useState(false);
@@ -88,7 +88,6 @@ const App: React.FC = () => {
     fetchInitialMetadata();
   }, [isAuthenticated, currentUser?.id, currentUser?.assignedStoreId]);
 
-  // 🔴 Load Investment when store changes
   useEffect(() => {
     if (currentStore?.id) {
        const saved = localStorage.getItem(`omni_invest_${currentStore.id}`);
@@ -96,7 +95,6 @@ const App: React.FC = () => {
     }
   }, [currentStore?.id]);
 
-  // 🔴 Function to Update Investment
   const handleUpdateInvestment = useCallback((amount: number) => {
     if (currentStore?.id) {
        localStorage.setItem(`omni_invest_${currentStore.id}`, amount.toString());
@@ -140,273 +138,86 @@ const App: React.FC = () => {
     const tempTransaction: CashTransaction = { ...transaction, id: `temp-${Date.now()}`, timestamp: new Date().toISOString(), storeId: currentStore?.id || '', amount: Number(transaction.amount) };
     setCashTransactions(prev => [tempTransaction, ...prev]);
     try {
-      const { data } = await supabase.from('cash_transactions').insert([{ ...transaction, storeId: currentStore?.id }]).select().single();
+      const { data, error } = await supabase.from('cash_transactions').insert([{ ...transaction, storeId: currentStore?.id }]).select().single();
+      if (error) throw error;
       if (data) {
         setCashTransactions(prev => prev.map(t => t.id === tempTransaction.id ? { ...data, amount: Number(data.amount) } : t));
         logActivity(`Logged Fund Transfer: ${transaction.type}`);
       }
-    } catch (err: any) { setCashTransactions(prev => prev.filter(t => t.id !== tempTransaction.id)); console.error("Transaction Error:", err); }
+    } catch (err: any) { 
+        setCashTransactions(prev => prev.filter(t => t.id !== tempTransaction.id)); 
+        Swal.fire({ icon: 'error', title: 'Transaction Failed', text: err.message, customClass: { popup: 'rounded-3xl' } }); 
+    }
   }, [currentStore?.id, logActivity]);
 
   const deleteCashTransaction = useCallback(async (id: string) => {
-    if (!window.confirm("Delete this transaction? Balances will be reverted automatically.")) return;
-    try { await supabase.from('cash_transactions').delete().eq('id', id); setCashTransactions(prev => prev.filter(t => t.id !== id)); logActivity(`Deleted Fund Transaction`); } 
-    catch (err: any) { alert(`Failed: ${err.message}`); }
+    const res = await Swal.fire({ title: 'Are you sure?', text: 'Delete this transaction? Balances will be reverted automatically.', icon: 'warning', showCancelButton: true, confirmButtonColor: '#f43f5e', cancelButtonColor: '#94a3b8', confirmButtonText: 'Confirm', customClass: { popup: 'rounded-3xl' } });
+    if (!res.isConfirmed) return;
+    try { await supabase.from('cash_transactions').delete().eq('id', id); setCashTransactions(prev => prev.filter(t => t.id !== id)); logActivity(`Deleted Fund Transaction`); Swal.fire({ icon: 'success', title: 'Deleted', timer: 1500, showConfirmButton: false, customClass: { popup: 'rounded-3xl' } }); } 
+    catch (err: any) { Swal.fire({ icon: 'error', title: 'Failed', text: err.message, customClass: { popup: 'rounded-3xl' } }); }
   }, [logActivity]);
 
-  // 🔴 ব্যালেন্স ক্যালকুলেশন (এখন storeInvestment এর উপর নির্ভরশীল)
-  const { netBalance, bankBalance } = useMemo(() => {
-    if (!currentStore) return { netBalance: 0, bankBalance: 0 };
-    
-    let totalCashIn = 0, totalExpense = 0;
-    sales.filter(s => s.storeId === currentStore.id && !s.invoiceId?.startsWith('VOID-')).forEach(s => totalCashIn += Number(s.amountPaid || 0));
-    expenses.filter(e => e.storeId === currentStore.id && e.category !== 'Wastage').forEach(e => totalExpense += Number(e.amount || 0));
-
-    let totalBankDeposit = 0, totalBankWithdrawal = 0, totalCashOutFromCash = 0, totalCashOutFromBank = 0;
-    cashTransactions.filter(t => t.storeId === currentStore.id).forEach(t => {
-      const amt = Number(t.amount || 0); 
-      if (t.type === 'BANK_DEPOSIT') totalBankDeposit += amt;
-      if (t.type === 'BANK_WITHDRAWAL') totalBankWithdrawal += amt;
-      if (t.type === 'CASH_OUT' && t.source === 'CASH') totalCashOutFromCash += amt;
-      if (t.type === 'CASH_OUT' && t.source === 'BANK') totalCashOutFromBank += amt;
+  const overallBalances = useMemo(() => {
+    if (!currentStore) return { cash: 0, bank: 0, card: 0, bkash: 0, nagad: 0 };
+    let cash = storeInvestment, bank = 0, card = 0, bkash = 0, nagad = 0;
+    sales.filter(s => s.storeId === currentStore.id && !s.invoiceId?.startsWith('VOID-')).forEach(s => {
+       const method = s.paymentMethod || 'Cash';
+       const amt = Number(s.amountPaid || 0);
+       if (method === 'Card') card += amt; else if (method === 'bKash') bkash += amt; else if (method === 'Nagad') nagad += amt; else cash += amt;
     });
-
-    const calculatedNetBalance = (totalCashIn + storeInvestment + totalBankWithdrawal) - (totalExpense + totalBankDeposit + totalCashOutFromCash);
-    const calculatedBankBalance = totalBankDeposit - (totalBankWithdrawal + totalCashOutFromBank);
-
-    return { netBalance: calculatedNetBalance, bankBalance: calculatedBankBalance };
-  }, [sales, expenses, cashTransactions, currentStore?.id, storeInvestment]); // 🔴 storeInvestment ডিপেন্ডেন্সি অ্যাড করা হয়েছে
+    expenses.filter(e => e.storeId === currentStore.id && e.category !== 'Wastage').forEach(e => { cash -= Number(e.amount || 0); });
+    cashTransactions.filter(t => t.storeId === currentStore.id).forEach(t => {
+      const amt = Number(t.amount || 0);
+      const deductFrom = (src: string) => { if (src === 'CASH') cash -= amt; else if (src === 'BANK') bank -= amt; else if (src === 'CARD') card -= amt; else if (src === 'BKASH') bkash -= amt; else if (src === 'NAGAD') nagad -= amt; };
+      const addTo = (dest: string) => { if (dest === 'CASH') cash += amt; else if (dest === 'BANK') bank += amt; else if (dest === 'CARD') card += amt; else if (dest === 'BKASH') bkash += amt; else if (dest === 'NAGAD') nagad += amt; };
+      if (t.type === 'BANK_DEPOSIT') { cash -= amt; bank += amt; } else if (t.type === 'BANK_WITHDRAWAL') { bank -= amt; cash += amt; } else if (t.type === 'CASH_OUT') deductFrom(t.source); else if (t.type === 'TRANSFER') { deductFrom(t.source); if(t.destination) addTo(t.destination); }
+    });
+    return { cash, bank, card, bkash, nagad };
+  }, [sales, expenses, cashTransactions, currentStore?.id, storeInvestment]); 
 
   const addSale = useCallback(async (sale: Omit<Sale, 'id' | 'timestamp'>) => {
     if (!sale.invoiceId?.startsWith('PAY-') && sale.productId !== 'PAYMENT_RECEIVED') {
       const product = products.find(p => p.id === sale.productId);
-      if (!product || product.quantity < sale.quantity) { alert("Action Denied: Insufficient stock!"); throw new Error("Insufficient stock"); }
+      if (!product || product.quantity < sale.quantity) { Swal.fire({ icon: 'error', title: 'Action Denied', text: 'Insufficient stock!', customClass: { popup: 'rounded-3xl' } }); throw new Error("Insufficient stock"); }
     }
-    const { data } = await supabase.from('sales').insert([{ ...sale, storeId: currentStore?.id }]).select().single();
-    if (data) setSales(prev => [data, ...prev]);
+    const tempId = `temp-sale-${Date.now()}`;
+    const tempSale = { ...sale, id: tempId, timestamp: new Date().toISOString(), storeId: currentStore?.id || '' } as Sale;
+    setSales(prev => [tempSale, ...prev]);
+    try {
+      const { data, error } = await supabase.from('sales').insert([{ ...sale, storeId: currentStore?.id }]).select().single();
+      if (error) throw error;
+      if (data) setSales(prev => prev.map(s => s.id === tempId ? data : s));
+    } catch (err: any) { setSales(prev => prev.filter(s => s.id !== tempId)); Swal.fire({ icon: 'error', title: 'Database Error', text: err.message, customClass: { popup: 'rounded-3xl' } }); }
   }, [currentStore?.id, products]);
 
-  const addProduct = useCallback(async (newProduct: Omit<Product, 'id' | 'lastUpdated'>) => {
-    const { data } = await supabase.from('products').insert([{ ...newProduct, storeId: currentStore?.id }]).select().single();
-    if (data) { setProducts(prev => [...prev, data]); return data; } return null;
-  }, [currentStore?.id]);
+  const addProduct = useCallback(async (newProduct: Omit<Product, 'id' | 'lastUpdated'>) => { const { data } = await supabase.from('products').insert([{ ...newProduct, storeId: currentStore?.id }]).select().single(); if (data) { setProducts(prev => [...prev, data]); return data; } return null; }, [currentStore?.id]);
+  const updateProduct = useCallback(async (id: string, updates: Partial<Product>) => { const { data } = await supabase.from('products').update(updates).eq('id', id).select().single(); if (data) setProducts(prev => prev.map(p => p.id === id ? data : p)); }, []);
+  const updateSale = useCallback(async (id: string, updates: Partial<Sale>) => { setSales(prev => prev.map(s => s.id === id ? { ...s, ...updates } : s)); await supabase.from('sales').update(updates).eq('id', id); }, []);
+  const addExpense = useCallback(async (expense: Omit<Expense, 'id' | 'timestamp'>) => { const tempId = `temp-exp-${Date.now()}`; const tempExpense = { ...expense, id: tempId, timestamp: new Date().toISOString(), storeId: currentStore?.id || '' } as Expense; setExpenses(prev => [tempExpense, ...prev]); try { const { data, error } = await supabase.from('expenses').insert([{ ...expense, storeId: currentStore?.id }]).select().single(); if (error) throw error; if (data) { setExpenses(prev => prev.map(e => e.id === tempId ? data : e)); return data; } return null; } catch (err: any) { setExpenses(prev => prev.filter(e => e.id !== tempId)); Swal.fire({ icon: 'error', title: 'Database Error', text: err.message, customClass: { popup: 'rounded-3xl' } }); return null; } }, [currentStore?.id]);
+  const updateExpense = useCallback(async (id: string, updates: Partial<Expense>) => { const { data } = await supabase.from('expenses').update(updates).eq('id', id).select().single(); if (data) setExpenses(prev => prev.map(e => e.id === id ? data : e)); }, []);
+  const addCustomer = useCallback(async (customer: Omit<Customer, 'id'>) => { const { data } = await supabase.from('customers').insert([{ ...customer, storeId: currentStore?.id }]).select().single(); if (data) setCustomers(prev => [...prev, data]); }, [currentStore?.id]);
+  const updateCustomer = useCallback(async (id: string, updates: Partial<Customer>) => { const { data } = await supabase.from('customers').update(updates).eq('id', id).select().single(); if (data) setCustomers(prev => prev.map(c => c.id === id ? data : c)); }, []);
+  const updateCustomerDue = useCallback(async (id: string, amount: number) => { const customer = customers.find(c => c.id === id); if (customer) { const { data } = await supabase.from('customers').update({ totalDue: customer.totalDue + amount }).eq('id', id).select().single(); if (data) setCustomers(prev => prev.map(c => c.id === id ? data : c)); } }, [customers]);
+  const addSupplier = useCallback(async (supplier: Omit<Supplier, 'id'>) => { const { data } = await supabase.from('suppliers').insert([{ ...supplier, storeId: currentStore?.id }]).select().single(); if (data) setSuppliers(prev => [...prev, data]); }, [currentStore?.id]);
+  const updateSupplier = useCallback(async (id: string, updates: Partial<Supplier>) => { const { data } = await supabase.from('suppliers').update(updates).eq('id', id).select().single(); if (data) setSuppliers(prev => prev.map(s => s.id === id ? data : s)); }, []);
+  const updateSupplierDue = useCallback(async (id: string, amount: number) => { const supplier = suppliers.find(s => s.id === id); if (supplier) { const { data } = await supabase.from('suppliers').update({ totalDue: supplier.totalDue + amount }).eq('id', id).select().single(); if (data) setSuppliers(prev => prev.map(s => s.id === id ? data : s)); } }, [suppliers]);
+  const addPurchase = useCallback(async (purchase: Omit<Purchase, 'id' | 'timestamp'>) => { const { data } = await supabase.from('purchases').insert([{ ...purchase, storeId: currentStore?.id }]).select().single(); if (data) setPurchases(prev => [data, ...prev]); }, [currentStore?.id]);
 
-  const updateProduct = useCallback(async (id: string, updates: Partial<Product>) => {
-    const { data } = await supabase.from('products').update(updates).eq('id', id).select().single();
-    if (data) setProducts(prev => prev.map(p => p.id === id ? data : p));
-  }, []);
-
-  const updateSale = useCallback(async (id: string, updates: Partial<Sale>) => {
-    const { data } = await supabase.from('sales').update(updates).eq('id', id).select().single();
-    if (data) setSales(prev => prev.map(s => s.id === id ? data : s));
-  }, []);
-
-  const addExpense = useCallback(async (expense: Omit<Expense, 'id' | 'timestamp'>) => {
-    const { data } = await supabase.from('expenses').insert([{ ...expense, storeId: currentStore?.id }]).select().single();
-    if (data) { setExpenses(prev => [data, ...prev]); return data; } return null;
-  }, [currentStore?.id]);
-
-  const updateExpense = useCallback(async (id: string, updates: Partial<Expense>) => {
-    const { data } = await supabase.from('expenses').update(updates).eq('id', id).select().single();
-    if (data) setExpenses(prev => prev.map(e => e.id === id ? data : e));
-  }, []);
-
-  const addCustomer = useCallback(async (customer: Omit<Customer, 'id'>) => {
-    const { data } = await supabase.from('customers').insert([{ ...customer, storeId: currentStore?.id }]).select().single();
-    if (data) setCustomers(prev => [...prev, data]);
-  }, [currentStore?.id]);
-
-  const updateCustomer = useCallback(async (id: string, updates: Partial<Customer>) => {
-    const { data } = await supabase.from('customers').update(updates).eq('id', id).select().single();
-    if (data) setCustomers(prev => prev.map(c => c.id === id ? data : c));
-  }, []);
-
-  const updateCustomerDue = useCallback(async (id: string, amount: number) => {
-    const customer = customers.find(c => c.id === id);
-    if (customer) {
-      const { data } = await supabase.from('customers').update({ totalDue: customer.totalDue + amount }).eq('id', id).select().single();
-      if (data) setCustomers(prev => prev.map(c => c.id === id ? data : c));
-    }
-  }, [customers]);
-
-  const addSupplier = useCallback(async (supplier: Omit<Supplier, 'id'>) => {
-    const { data } = await supabase.from('suppliers').insert([{ ...supplier, storeId: currentStore?.id }]).select().single();
-    if (data) setSuppliers(prev => [...prev, data]);
-  }, [currentStore?.id]);
-
-  const updateSupplier = useCallback(async (id: string, updates: Partial<Supplier>) => {
-    const { data } = await supabase.from('suppliers').update(updates).eq('id', id).select().single();
-    if (data) setSuppliers(prev => prev.map(s => s.id === id ? data : s));
-  }, []);
-
-  const updateSupplierDue = useCallback(async (id: string, amount: number) => {
-    const supplier = suppliers.find(s => s.id === id);
-    if (supplier) {
-      const { data } = await supabase.from('suppliers').update({ totalDue: supplier.totalDue + amount }).eq('id', id).select().single();
-      if (data) setSuppliers(prev => prev.map(s => s.id === id ? data : s));
-    }
-  }, [suppliers]);
-
-  const addPurchase = useCallback(async (purchase: Omit<Purchase, 'id' | 'timestamp'>) => {
-    const { data } = await supabase.from('purchases').insert([{ ...purchase, storeId: currentStore?.id }]).select().single();
-    if (data) setPurchases(prev => [data, ...prev]);
-  }, [currentStore?.id]);
-
-  const deleteProduct = useCallback(async (id: string) => {
-    if (!window.confirm("Delete this product? All related stock will be removed and related expenses will be reversed.")) return;
-    try {
-      const p = products.find(x => x.id === id);
-      if (p) {
-        const relatedExpenses = expenses.filter(e => e.storeId === currentStore?.id && e.category === "Operational Cost" && e.description.includes(p.name));
-        for (const exp of relatedExpenses) { await supabase.from('expenses').delete().eq('id', exp.id); }
-        if (relatedExpenses.length > 0) { const expenseIdsToRemove = relatedExpenses.map(e => e.id); setExpenses(prev => prev.filter(e => !expenseIdsToRemove.includes(e.id))); }
-      }
-      await supabase.from('products').delete().eq('id', id); setProducts(prev => prev.filter(p => p.id !== id)); logActivity(`Deleted product: ${p?.name}`);
-    } catch (err: any) { alert(err.message); }
-  }, [products, expenses, currentStore?.id, logActivity]);
-
-  const deleteCustomer = useCallback(async (id: string) => {
-    const customer = customers.find(c => c.id === id);
-    if (customer && customer.totalDue > 0) return alert(`Action Denied: Clear dues ($${customer.totalDue}) first!`);
-    if (!window.confirm("Delete this customer?")) return;
-    try { await supabase.from('customers').delete().eq('id', id); setCustomers(prev => prev.filter(c => c.id !== id)); logActivity(`Deleted customer profile: ${customer?.name}`); } catch (err: any) { alert(err.message); }
-  }, [customers, logActivity]);
-
-  const deleteSupplier = useCallback(async (id: string) => {
-    const supplier = suppliers.find(s => s.id === id);
-    if (supplier && supplier.totalDue > 0) return alert(`Action Denied: Clear dues ($${supplier.totalDue}) first!`);
-    if (!window.confirm("Delete this supplier?")) return;
-    try { await supabase.from('suppliers').delete().eq('id', id); setSuppliers(prev => prev.filter(s => s.id !== id)); logActivity(`Deleted supplier profile: ${supplier?.name}`); } catch (err: any) { alert(err.message); }
-  }, [suppliers, logActivity]);
-
-  const deleteSale = useCallback(async (id: string) => {
-    const sale = sales.find(s => s.id === id);
-    if (!sale || sale.invoiceId?.startsWith('VOID-')) return;
-    if (sale.amountPaid > 0 && !sale.invoiceId?.startsWith('PAY-')) return alert("Action Denied: This invoice has payments. Please reverse the payment to $0 first.");
-    if (!window.confirm("Are you sure you want to VOID this sale? Stock and dues will be adjusted.")) return;
-
-    try {
-      if (sale.invoiceId?.startsWith('PAY-') || sale.productId === 'PAYMENT_RECEIVED') {
-        const customer = customers.find(c => c.id === sale.customerId);
-        if (customer && sale.amountPaid) {
-          const newDue = customer.totalDue + Number(sale.amountPaid);
-          await supabase.from('customers').update({ totalDue: newDue }).eq('id', customer.id);
-          setCustomers(prev => prev.map(c => c.id === customer.id ? { ...c, totalDue: newDue } : c));
-        }
-      } else {
-        const product = products.find(p => p.id === sale.productId);
-        if (product) {
-          const newQty = product.quantity + Number(sale.quantity);
-          await supabase.from('products').update({ quantity: newQty }).eq('id', product.id);
-          setProducts(prev => prev.map(p => p.id === product.id ? { ...p, quantity: newQty } : p));
-        }
-        if (sale.amountDue > 0 && sale.customerId) {
-          const customer = customers.find(c => c.id === sale.customerId);
-          if (customer) {
-            const newDue = Math.max(0, customer.totalDue - Number(sale.amountDue));
-            await supabase.from('customers').update({ totalDue: newDue }).eq('id', customer.id);
-            setCustomers(prev => prev.map(c => c.id === customer.id ? { ...c, totalDue: newDue } : c));
-          }
-        }
-      }
-      const voidInvoiceId = `VOID-${sale.invoiceId}`;
-      await supabase.from('sales').update({ invoiceId: voidInvoiceId, quantity: 0, totalPrice: 0, amountPaid: 0, amountDue: 0 }).eq('id', id);
-      setSales(prev => prev.map(s => s.id === id ? { ...s, invoiceId: voidInvoiceId, quantity: 0, totalPrice: 0, amountPaid: 0, amountDue: 0 } : s));
-      logActivity(`VOIDED Sale Invoice: ${sale.invoiceId}`); alert("Sale voided successfully.");
-    } catch (err: any) { alert(`Failed: ${err.message}`); }
-  }, [sales, products, customers, logActivity]);
-
-  const deletePurchase = useCallback(async (id: string) => {
-    const purchase = purchases.find(p => p.id === id);
-    if (!purchase || purchase.poNumber?.startsWith('VOID-')) return;
-    if (purchase.amountPaid > 0 && !purchase.poNumber?.startsWith('PAY-') && purchase.productId !== 'SUPPLIER_PAYMENT') return alert("Action Denied: This PO has payments recorded. Please reverse the payment to $0 first.");
-    if (!window.confirm("Are you sure you want to VOID this purchase? Stock will be reduced.")) return;
-
-    try {
-      if (purchase.poNumber?.startsWith('PAY-') || purchase.productId === 'SUPPLIER_PAYMENT' || purchase.productId === 'PAYMENT_RECEIVED') {
-        const supplier = suppliers.find(s => s.id === purchase.supplierId);
-        if (supplier && purchase.amountPaid) {
-          const newDue = supplier.totalDue + Number(purchase.amountPaid);
-          await supabase.from('suppliers').update({ totalDue: newDue }).eq('id', supplier.id);
-          setSuppliers(prev => prev.map(s => s.id === supplier.id ? { ...s, totalDue: newDue } : s));
-        }
-      } else {
-        const product = products.find(p => p.id === purchase.productId);
-        if (product) {
-          const newQty = Math.max(0, product.quantity - Number(purchase.quantity)); 
-          await supabase.from('products').update({ quantity: newQty }).eq('id', product.id);
-          setProducts(prev => prev.map(p => p.id === product.id ? { ...p, quantity: newQty } : p));
-        }
-        if (purchase.amountDue > 0 && purchase.supplierId) {
-          const supplier = suppliers.find(s => s.id === purchase.supplierId);
-          if (supplier) {
-            const newDue = Math.max(0, supplier.totalDue - Number(purchase.amountDue));
-            await supabase.from('suppliers').update({ totalDue: newDue }).eq('id', supplier.id);
-            setSuppliers(prev => prev.map(s => s.id === supplier.id ? { ...s, totalDue: newDue } : s));
-          }
-        }
-      }
-      const voidPoNumber = `VOID-${purchase.poNumber}`;
-      await supabase.from('purchases').update({ poNumber: voidPoNumber, quantity: 0, totalCost: 0, amountPaid: 0, amountDue: 0 }).eq('id', id);
-      setPurchases(prev => prev.map(p => p.id === id ? { ...p, poNumber: voidPoNumber, quantity: 0, totalCost: 0, amountPaid: 0, amountDue: 0 } : p));
-      logActivity(`VOIDED Purchase PO: ${purchase.poNumber}`); alert("Purchase voided successfully.");
-    } catch (err: any) { alert(`Failed: ${err.message}`); }
-  }, [purchases, products, suppliers, logActivity]);
-
-  const deleteExpense = useCallback(async (id: string) => {
-    const expense = expenses.find(e => e.id === id);
-    if (!expense) return;
-    if (!window.confirm("Are you sure you want to delete this expense? Funds will be reversed.")) return;
-    try {
-      if (expense.category === 'Wastage') {
-        const expenseData = expense as any; 
-        if (expenseData.productId && expenseData.quantity) {
-          const product = products.find(p => p.id === expenseData.productId);
-          if (product) {
-            const newQty = product.quantity + Number(expenseData.quantity);
-            await supabase.from('products').update({ quantity: newQty }).eq('id', product.id);
-            setProducts(prev => prev.map(p => p.id === product.id ? { ...p, quantity: newQty } : p));
-          }
-        }
-      }
-      await supabase.from('expenses').delete().eq('id', id); setExpenses(prev => prev.filter(e => e.id !== id)); logActivity(`Deleted Expense: ${expense.category} - $${expense.amount}`);
-    } catch (err: any) { alert(`Failed: ${err.message}`); }
-  }, [expenses, products, logActivity]);
-
+  const deleteProduct = useCallback(async (id: string) => { const res = await Swal.fire({ title: 'Are you sure?', text: 'All related stock will be removed and related expenses will be reversed.', icon: 'warning', showCancelButton: true, confirmButtonColor: '#f43f5e', cancelButtonColor: '#94a3b8', confirmButtonText: 'Confirm', customClass: { popup: 'rounded-3xl' } }); if (!res.isConfirmed) return; try { const p = products.find(x => x.id === id); if (p) { const relatedExpenses = expenses.filter(e => e.storeId === currentStore?.id && e.category === "Operational Cost" && e.description.includes(p.name)); for (const exp of relatedExpenses) { await supabase.from('expenses').delete().eq('id', exp.id); } if (relatedExpenses.length > 0) { const expenseIdsToRemove = relatedExpenses.map(e => e.id); setExpenses(prev => prev.filter(e => !expenseIdsToRemove.includes(e.id))); } } await supabase.from('products').delete().eq('id', id); setProducts(prev => prev.filter(p => p.id !== id)); logActivity(`Deleted product: ${p?.name}`); Swal.fire({ icon: 'success', title: 'Deleted', timer: 1500, showConfirmButton: false, customClass: { popup: 'rounded-3xl' } }); } catch (err: any) { Swal.fire({ icon: 'error', title: 'Failed', text: err.message, customClass: { popup: 'rounded-3xl' } }); } }, [products, expenses, currentStore?.id, logActivity]);
+  const deleteCustomer = useCallback(async (id: string) => { const customer = customers.find(c => c.id === id); if (customer && customer.totalDue > 0) { Swal.fire({ icon: 'warning', title: 'Action Denied', text: `Clear dues ($${customer.totalDue}) first!`, confirmButtonColor: '#f59e0b', customClass: { popup: 'rounded-3xl' } }); return; } const res = await Swal.fire({ title: 'Are you sure?', text: 'Delete this customer profile?', icon: 'warning', showCancelButton: true, confirmButtonColor: '#f43f5e', cancelButtonColor: '#94a3b8', confirmButtonText: 'Confirm', customClass: { popup: 'rounded-3xl' } }); if (!res.isConfirmed) return; try { await supabase.from('customers').delete().eq('id', id); setCustomers(prev => prev.filter(c => c.id !== id)); logActivity(`Deleted customer profile: ${customer?.name}`); Swal.fire({ icon: 'success', title: 'Deleted', timer: 1500, showConfirmButton: false, customClass: { popup: 'rounded-3xl' } }); } catch (err: any) { Swal.fire({ icon: 'error', title: 'Failed', text: err.message, customClass: { popup: 'rounded-3xl' } }); } }, [customers, logActivity]);
+  const deleteSupplier = useCallback(async (id: string) => { const supplier = suppliers.find(s => s.id === id); if (supplier && supplier.totalDue > 0) { Swal.fire({ icon: 'warning', title: 'Action Denied', text: `Clear dues ($${supplier.totalDue}) first!`, confirmButtonColor: '#f59e0b', customClass: { popup: 'rounded-3xl' } }); return; } const res = await Swal.fire({ title: 'Are you sure?', text: 'Delete this supplier profile?', icon: 'warning', showCancelButton: true, confirmButtonColor: '#f43f5e', cancelButtonColor: '#94a3b8', confirmButtonText: 'Confirm', customClass: { popup: 'rounded-3xl' } }); if (!res.isConfirmed) return; try { await supabase.from('suppliers').delete().eq('id', id); setSuppliers(prev => prev.filter(s => s.id !== id)); logActivity(`Deleted supplier profile: ${supplier?.name}`); Swal.fire({ icon: 'success', title: 'Deleted', timer: 1500, showConfirmButton: false, customClass: { popup: 'rounded-3xl' } }); } catch (err: any) { Swal.fire({ icon: 'error', title: 'Failed', text: err.message, customClass: { popup: 'rounded-3xl' } }); } }, [suppliers, logActivity]);
+  const deleteSale = useCallback(async (id: string) => { const sale = sales.find(s => s.id === id); if (!sale || sale.invoiceId?.startsWith('VOID-')) return; if (sale.amountPaid > 0 && !sale.invoiceId?.startsWith('PAY-')) { Swal.fire({ icon: 'warning', title: 'Action Denied', text: 'This invoice has payments. Please reverse the payment to $0 first.', confirmButtonColor: '#f59e0b', customClass: { popup: 'rounded-3xl' } }); return; } const res = await Swal.fire({ title: 'Are you sure?', text: 'Do you want to VOID this sale? Stock and dues will be adjusted.', icon: 'warning', showCancelButton: true, confirmButtonColor: '#f43f5e', cancelButtonColor: '#94a3b8', confirmButtonText: 'Confirm', customClass: { popup: 'rounded-3xl' } }); if (!res.isConfirmed) return; try { if (sale.invoiceId?.startsWith('PAY-') || sale.productId === 'PAYMENT_RECEIVED') { const customer = customers.find(c => c.id === sale.customerId); if (customer && sale.amountPaid) { const newDue = customer.totalDue + Number(sale.amountPaid); await supabase.from('customers').update({ totalDue: newDue }).eq('id', customer.id); setCustomers(prev => prev.map(c => c.id === customer.id ? { ...c, totalDue: newDue } : c)); } } else { const product = products.find(p => p.id === sale.productId); if (product) { const newQty = product.quantity + Number(sale.quantity); await supabase.from('products').update({ quantity: newQty }).eq('id', product.id); setProducts(prev => prev.map(p => p.id === product.id ? { ...p, quantity: newQty } : p)); } if (sale.amountDue > 0 && sale.customerId) { const customer = customers.find(c => c.id === sale.customerId); if (customer) { const newDue = Math.max(0, customer.totalDue - Number(sale.amountDue)); await supabase.from('customers').update({ totalDue: newDue }).eq('id', customer.id); setCustomers(prev => prev.map(c => c.id === customer.id ? { ...c, totalDue: newDue } : c)); } } } const voidInvoiceId = `VOID-${sale.invoiceId}`; await supabase.from('sales').update({ invoiceId: voidInvoiceId, quantity: 0, totalPrice: 0, amountPaid: 0, amountDue: 0 }).eq('id', id); setSales(prev => prev.map(s => s.id === id ? { ...s, invoiceId: voidInvoiceId, quantity: 0, totalPrice: 0, amountPaid: 0, amountDue: 0 } : s)); logActivity(`VOIDED Sale Invoice: ${sale.invoiceId}`); Swal.fire({ icon: 'success', title: 'VOIDED', text: 'Sale voided successfully.', timer: 1500, showConfirmButton: false, customClass: { popup: 'rounded-3xl' } }); } catch (err: any) { Swal.fire({ icon: 'error', title: 'Failed', text: err.message, customClass: { popup: 'rounded-3xl' } }); } }, [sales, products, customers, logActivity]);
+  const deletePurchase = useCallback(async (id: string) => { const purchase = purchases.find(p => p.id === id); if (!purchase || purchase.poNumber?.startsWith('VOID-')) return; if (purchase.amountPaid > 0 && !purchase.poNumber?.startsWith('PAY-') && purchase.productId !== 'SUPPLIER_PAYMENT') { Swal.fire({ icon: 'warning', title: 'Action Denied', text: 'This PO has payments recorded. Please reverse the payment to $0 first.', confirmButtonColor: '#f59e0b', customClass: { popup: 'rounded-3xl' } }); return; } const res = await Swal.fire({ title: 'Are you sure?', text: 'Do you want to VOID this purchase? Stock will be reduced.', icon: 'warning', showCancelButton: true, confirmButtonColor: '#f43f5e', cancelButtonColor: '#94a3b8', confirmButtonText: 'Confirm', customClass: { popup: 'rounded-3xl' } }); if (!res.isConfirmed) return; try { if (purchase.poNumber?.startsWith('PAY-') || purchase.productId === 'SUPPLIER_PAYMENT' || purchase.productId === 'PAYMENT_RECEIVED') { const supplier = suppliers.find(s => s.id === purchase.supplierId); if (supplier && purchase.amountPaid) { const newDue = supplier.totalDue + Number(purchase.amountPaid); await supabase.from('suppliers').update({ totalDue: newDue }).eq('id', supplier.id); setSuppliers(prev => prev.map(s => s.id === supplier.id ? { ...s, totalDue: newDue } : s)); } } else { const product = products.find(p => p.id === purchase.productId); if (product) { const newQty = Math.max(0, product.quantity - Number(purchase.quantity)); await supabase.from('products').update({ quantity: newQty }).eq('id', product.id); setProducts(prev => prev.map(p => p.id === product.id ? { ...p, quantity: newQty } : p)); } if (purchase.amountDue > 0 && purchase.supplierId) { const supplier = suppliers.find(s => s.id === purchase.supplierId); if (supplier) { const newDue = Math.max(0, supplier.totalDue - Number(purchase.amountDue)); await supabase.from('suppliers').update({ totalDue: newDue }).eq('id', supplier.id); setSuppliers(prev => prev.map(s => s.id === supplier.id ? { ...s, totalDue: newDue } : s)); } } } const voidPoNumber = `VOID-${purchase.poNumber}`; await supabase.from('purchases').update({ poNumber: voidPoNumber, quantity: 0, totalCost: 0, amountPaid: 0, amountDue: 0 }).eq('id', id); setPurchases(prev => prev.map(p => p.id === id ? { ...p, poNumber: voidPoNumber, quantity: 0, totalCost: 0, amountPaid: 0, amountDue: 0 } : p)); logActivity(`VOIDED Purchase PO: ${purchase.poNumber}`); Swal.fire({ icon: 'success', title: 'VOIDED', text: 'Purchase voided successfully.', timer: 1500, showConfirmButton: false, customClass: { popup: 'rounded-3xl' } }); } catch (err: any) { Swal.fire({ icon: 'error', title: 'Failed', text: err.message, customClass: { popup: 'rounded-3xl' } }); } }, [purchases, products, suppliers, logActivity]);
+  const deleteExpense = useCallback(async (id: string) => { const expense = expenses.find(e => e.id === id); if (!expense) return; const res = await Swal.fire({ title: 'Are you sure?', text: 'Delete this expense? Funds will be reversed.', icon: 'warning', showCancelButton: true, confirmButtonColor: '#f43f5e', cancelButtonColor: '#94a3b8', confirmButtonText: 'Confirm', customClass: { popup: 'rounded-3xl' } }); if (!res.isConfirmed) return; try { if (expense.category === 'Wastage') { const expenseData = expense as any; if (expenseData.productId && expenseData.quantity) { const product = products.find(p => p.id === expenseData.productId); if (product) { const newQty = product.quantity + Number(expenseData.quantity); await supabase.from('products').update({ quantity: newQty }).eq('id', product.id); setProducts(prev => prev.map(p => p.id === product.id ? { ...p, quantity: newQty } : p)); } } } await supabase.from('expenses').delete().eq('id', id); setExpenses(prev => prev.filter(e => e.id !== id)); logActivity(`Deleted Expense: ${expense.category} - $${expense.amount}`); Swal.fire({ icon: 'success', title: 'Deleted', timer: 1500, showConfirmButton: false, customClass: { popup: 'rounded-3xl' } }); } catch (err: any) { Swal.fire({ icon: 'error', title: 'Failed', text: err.message, customClass: { popup: 'rounded-3xl' } }); } }, [expenses, products, logActivity]);
   const handleAddCategory = useCallback((name: string) => { setCategories(prev => { if (prev.includes(name)) return prev; const updated = [...prev, name]; localStorage.setItem('omni_categories', JSON.stringify(updated)); return updated; }); }, []);
   const handleRemoveCategory = useCallback((name: string) => { setCategories(prev => { const updated = prev.filter(c => c !== name); localStorage.setItem('omni_categories', JSON.stringify(updated)); return updated; }); }, []);
   const handleAddExpenseCategory = useCallback((name: string) => { setExpenseCategories(prev => { if (prev.includes(name)) return prev; const updated = [...prev, name]; localStorage.setItem('omni_expense_categories', JSON.stringify(updated)); return updated; }); }, []);
   const handleRemoveExpenseCategory = useCallback((name: string) => { setExpenseCategories(prev => { const updated = prev.filter(c => c !== name); localStorage.setItem('omni_expense_categories', JSON.stringify(updated)); return updated; }); }, []);
-
-  const deleteStore = async (id: string) => {
-    if (stores.length <= 1) return alert("System requires at least one hub.");
-    if (!window.confirm("Are you sure you want to delete this entire hub?")) return;
-    await supabase.from('stores').delete().eq('id', id);
-    const updated = stores.filter(s => s.id !== id); setStores(updated); if (currentStore?.id === id) setCurrentStore(updated[0]);
-  };
-
+  const deleteStore = async (id: string) => { if (stores.length <= 1) { Swal.fire({ icon: 'warning', title: 'Action Denied', text: 'System requires at least one hub.', confirmButtonColor: '#f59e0b', customClass: { popup: 'rounded-3xl' } }); return; } const res = await Swal.fire({ title: 'Are you sure?', text: 'Do you want to delete this entire hub?', icon: 'warning', showCancelButton: true, confirmButtonColor: '#f43f5e', cancelButtonColor: '#94a3b8', confirmButtonText: 'Confirm', customClass: { popup: 'rounded-3xl' } }); if (!res.isConfirmed) return; await supabase.from('stores').delete().eq('id', id); const updated = stores.filter(s => s.id !== id); setStores(updated); if (currentStore?.id === id) setCurrentStore(updated[0]); Swal.fire({ icon: 'success', title: 'Deleted', timer: 1500, showConfirmButton: false, customClass: { popup: 'rounded-3xl' } }); };
   const checkPermission = (action: keyof UserPermissions) => { if (currentUser?.role === UserRole.SUPER_ADMIN) return true; return currentUser?.permissions?.[action] || false; };
 
-  const handleDownloadBackup = useCallback(async (storeId: string, storeName: string) => {
-    try {
-      const [ { data: prodData }, { data: custData }, { data: suppData } ] = await Promise.all([ supabase.from('products').select('*').eq('storeId', storeId), supabase.from('customers').select('*').eq('storeId', storeId), supabase.from('suppliers').select('*').eq('storeId', storeId) ]);
-      const backupData = { storeName, backupDate: new Date().toISOString(), inventory: prodData || [], customers: custData || [], suppliers: suppData || [] };
-      const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `backup_${storeName.replace(/\s+/g, '_').toLowerCase()}_${new Date().toISOString().split('T')[0]}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); logActivity(`Downloaded JSON Backup for ${storeName}`);
-    } catch (error: any) { alert(`Backup failed: ${error.message}`); }
-  }, [logActivity]);
-
-  const handleRestoreBackup = useCallback(async (storeId: string, storeName: string, file: File) => {
-    try {
-      const text = await file.text(); const backupData = JSON.parse(text);
-      if (!backupData.inventory || !backupData.customers || !backupData.suppliers) throw new Error("Invalid backup file format. Required data missing.");
-      if (backupData.storeName && backupData.storeName !== storeName) { const confirmMismatch = window.confirm(`⚠️ সতর্কতা: এই ফাইলটি "${backupData.storeName}" এর, কিন্তু আপনি এটি "${storeName}" এ আপলোড করছেন! আপনি কি আসলেই এটি করতে চান?`); if (!confirmMismatch) return; }
-      if (backupData.inventory.length > 0) { const { error } = await supabase.from('products').upsert(backupData.inventory); if (error) throw error; }
-      if (backupData.customers.length > 0) { const { error } = await supabase.from('customers').upsert(backupData.customers); if (error) throw error; }
-      if (backupData.suppliers.length > 0) { const { error } = await supabase.from('suppliers').upsert(backupData.suppliers); if (error) throw error; }
-      logActivity(`Restored JSON Backup for ${storeName}`); alert(`✅ সফলভাবে ডেটা রিস্টোর হয়েছে!\nনতুন ডেটা দেখার জন্য পেজটি রিলোড হচ্ছে।`); window.location.reload(); 
-    } catch (error: any) { alert(`Restore failed: ${error.message}`); }
-  }, [logActivity]);
+  const handleDownloadBackup = useCallback(async (storeId: string, storeName: string) => { try { const [ { data: prodData }, { data: custData }, { data: suppData } ] = await Promise.all([ supabase.from('products').select('*').eq('storeId', storeId), supabase.from('customers').select('*').eq('storeId', storeId), supabase.from('suppliers').select('*').eq('storeId', storeId) ]); const backupData = { storeName, backupDate: new Date().toISOString(), inventory: prodData || [], customers: custData || [], suppliers: suppData || [] }; const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `backup_${storeName.replace(/\s+/g, '_').toLowerCase()}_${new Date().toISOString().split('T')[0]}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); logActivity(`Downloaded JSON Backup for ${storeName}`); } catch (error: any) { Swal.fire({ icon: 'error', title: 'Backup Failed', text: error.message, customClass: { popup: 'rounded-3xl' } }); } }, [logActivity]);
+  const handleRestoreBackup = useCallback(async (storeId: string, storeName: string, file: File) => { try { const text = await file.text(); const backupData = JSON.parse(text); if (!backupData.inventory || !backupData.customers || !backupData.suppliers) throw new Error("Invalid backup file format. Required data missing."); if (backupData.storeName && backupData.storeName !== storeName) { const res = await Swal.fire({ title: '⚠️ সতর্কতা', text: `এই ফাইলটি "${backupData.storeName}" এর, কিন্তু আপনি এটি "${storeName}" এ আপলোড করছেন! আপনি কি আসলেই এটি করতে চান?`, icon: 'warning', showCancelButton: true, confirmButtonColor: '#f43f5e', cancelButtonColor: '#94a3b8', confirmButtonText: 'Yes, Restore', customClass: { popup: 'rounded-3xl' } }); if (!res.isConfirmed) return; } if (backupData.inventory.length > 0) { const { error } = await supabase.from('products').upsert(backupData.inventory); if (error) throw error; } if (backupData.customers.length > 0) { const { error } = await supabase.from('customers').upsert(backupData.customers); if (error) throw error; } if (backupData.suppliers.length > 0) { const { error } = await supabase.from('suppliers').upsert(backupData.suppliers); if (error) throw error; } logActivity(`Restored JSON Backup for ${storeName}`); await Swal.fire({ icon: 'success', title: 'ডেটা রিস্টোর সফল!', text: 'নতুন ডেটা দেখার জন্য পেজটি রিলোড হচ্ছে।', timer: 2000, showConfirmButton: false, customClass: { popup: 'rounded-3xl' } }); window.location.reload(); } catch (error: any) { Swal.fire({ icon: 'error', title: 'Restore Failed', text: error.message, customClass: { popup: 'rounded-3xl' } }); } }, [logActivity]);
 
   if (!isAuthenticated || !currentUser) return <Login onLogin={handleLogin} />;
   
@@ -430,10 +241,9 @@ const App: React.FC = () => {
         
         <Suspense fallback={<div className="min-h-screen bg-slate-950 flex items-center justify-center text-amber-400 font-black tracking-widest uppercase animate-pulse">Loading Module...</div>}>
           <Routes>
-            {/* 🔴 Dashboard এ props হিসেবে initialInvestment পাস করা হয়েছে */}
-            <Route path="/" element={currentUser.role !== UserRole.SALESMAN ? <Dashboard products={products} currentStore={currentStore} sales={sales} expenses={expenses} currentUser={currentUser} activities={activities} cashTransactions={cashTransactions} initialInvestment={storeInvestment} onUpdateInvestment={handleUpdateInvestment} /> : <Navigate to="/inventory" replace />} />
+            <Route path="/" element={currentUser.role !== UserRole.SALESMAN ? <Dashboard products={products} currentStore={currentStore} sales={sales} expenses={expenses} currentUser={currentUser} activities={activities} cashTransactions={cashTransactions} initialInvestment={storeInvestment} onUpdateInvestment={handleUpdateInvestment} overallBalances={overallBalances} /> : <Navigate to="/inventory" replace />} />
             
-            <Route path="/funds" element={currentUser.role !== UserRole.SALESMAN ? <CashManagement currentStore={currentStore} transactions={cashTransactions} netBalance={netBalance} bankBalance={bankBalance} onAddTransaction={addCashTransaction} onDeleteTransaction={deleteCashTransaction} canEdit={checkPermission('expenses_edit')} /> : <Navigate to="/" replace />} />
+            <Route path="/funds" element={currentUser.role !== UserRole.SALESMAN ? <CashManagement currentStore={currentStore} transactions={cashTransactions} balances={overallBalances} onAddTransaction={addCashTransaction} onDeleteTransaction={deleteCashTransaction} canEdit={checkPermission('expenses_edit')} /> : <Navigate to="/" replace />} />
 
             <Route path="/inventory" element={<Inventory products={products} suppliers={suppliers} purchases={purchases} currentStore={currentStore} currentUser={currentUser} categories={categories} sales={sales} expenses={expenses} onUpdate={updateProduct} onDelete={deleteProduct} onAdd={addProduct} onAddSale={addSale} onAddExpense={addExpense} onUpdateExpense={updateExpense} onDeleteExpense={deleteExpense} onAddCategory={handleAddCategory} onRemoveCategory={handleRemoveCategory} onUpdateSupplierDue={updateSupplierDue} onAddPurchase={addPurchase} canEditPrices={checkPermission('inventory_edit')} canDelete={checkPermission('inventory_delete')} />} />
             <Route path="/sales" element={<Sales sales={sales} products={products} customers={customers} expenses={expenses} currentStore={currentStore} currentUser={currentUser} onAddSale={addSale} onUpdateSale={updateSale} onUpdateStock={updateProduct} onUpdateCustomerDue={updateCustomerDue} onDeleteSale={deleteSale} canDelete={checkPermission('sales_delete')} />} />

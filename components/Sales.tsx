@@ -22,7 +22,8 @@ import {
   ChevronRight,
   RotateCcw,
   AlertOctagon,
-  Zap
+  Zap,
+  ChevronDown
 } from 'lucide-react';
 
 import { motion, AnimatePresence } from 'framer-motion';
@@ -58,13 +59,11 @@ const Sales: React.FC<SalesProps> = ({
 }) => {
   const [isSessionActive, setIsSessionActive] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [showMethodBreakdown, setShowMethodBreakdown] = useState(false); 
   
   const [filterDate, setFilterDate] = useState(() => {
     const today = new Date();
-    const year = today.getFullYear();
-    const month = String(today.getMonth() + 1).padStart(2, '0');
-    const day = String(today.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
+    return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
   });
 
   const [currentPage, setCurrentPage] = useState(1);
@@ -82,6 +81,7 @@ const Sales: React.FC<SalesProps> = ({
   const [unitPrice, setUnitPrice] = useState(0);
   const [discount, setDiscount] = useState(0);
   const [amountPaid, setAmountPaid] = useState(0);
+  const [paymentMethod, setPaymentMethod] = useState<string>('Cash'); 
   const [invoiceId, setInvoiceId] = useState('');
   const [showSuccessToast, setShowSuccessToast] = useState(false);
   
@@ -96,212 +96,125 @@ const Sales: React.FC<SalesProps> = ({
     if (isSessionActive && !invoiceId) {
       const year = new Date().getFullYear();
       const count = sales.length + 1;
-      const formattedCount = String(count).padStart(3, '0');
-      setInvoiceId(`INV-${year}-${formattedCount}`);
+      setInvoiceId(`INV-${year}-${String(count).padStart(3, '0')}`);
     }
   }, [isSessionActive, sales.length, invoiceId]);
 
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [searchTerm, filterDate]);
+  useEffect(() => setCurrentPage(1), [searchTerm, filterDate]);
 
   const resetEntryForm = () => {
-    setSkuId('');
-    setMatchedProduct(null);
-    setQuantity(1);
-    setUnitPrice(0);
-    setDiscount(0);
-    setAmountPaid(0);
-    setScannerError(null);
+    setSkuId(''); setMatchedProduct(null); setQuantity(1); setUnitPrice(0); setDiscount(0); setAmountPaid(0); setScannerError(null); setPaymentMethod('Cash');
   };
 
   const safeStopScanner = async () => {
     if (scannerRef.current) {
       try {
         const state = scannerRef.current.getState();
-        if (state === 2 || state === 3) {
-          await scannerRef.current.stop();
-        }
-      } catch (err) {
-        console.warn("Scanner stop suppressed:", err);
-      } finally {
-        scannerRef.current = null;
-      }
+        if (state === 2 || state === 3) await scannerRef.current.stop();
+      } catch (err) {} finally { scannerRef.current = null; }
     }
   };
 
   const startScanner = async () => {
-    setIsScanning(true);
-    setScannerError(null);
-    await safeStopScanner();
-
+    setIsScanning(true); setScannerError(null); await safeStopScanner();
     setTimeout(async () => {
       try {
         const html5QrCode = new (window as any).Html5Qrcode("sales-scanner-reader");
         scannerRef.current = html5QrCode;
         const config = { fps: 15, qrbox: { width: 250, height: 250 } };
-        const onScanSuccess = (decodedText: string) => {
-          handleSkuLookup(decodedText, true);
-          setIsScanning(false);
-          safeStopScanner();
-        };
-
-        try {
-          await html5QrCode.start({ facingMode: "environment" }, config, onScanSuccess, () => {});
-        } catch (err1) {
-          try {
-            await html5QrCode.start({ facingMode: "user" }, config, onScanSuccess, () => {});
-          } catch (err2) {
+        const onScanSuccess = (decodedText: string) => { handleSkuLookup(decodedText, true); setIsScanning(false); safeStopScanner(); };
+        try { await html5QrCode.start({ facingMode: "environment" }, config, onScanSuccess, () => {}); } 
+        catch (err1) {
+          try { await html5QrCode.start({ facingMode: "user" }, config, onScanSuccess, () => {}); } 
+          catch (err2) {
             const devices = await (window as any).Html5Qrcode.getCameras();
-            if (devices && devices.length > 0) {
-              await html5QrCode.start(devices[0].id, config, onScanSuccess, () => {});
-            } else {
-              throw new Error("Optical device unavailable.");
-            }
+            if (devices && devices.length > 0) await html5QrCode.start(devices[0].id, config, onScanSuccess, () => {});
+            else throw new Error("Optical device unavailable.");
           }
         }
-      } catch (err: any) {
-        setScannerError(err?.message || "Scanner initialization failed.");
-        setIsScanning(false);
-      }
+      } catch (err: any) { setScannerError(err?.message || "Scanner initialization failed."); setIsScanning(false); }
     }, 350);
   };
 
   const handleSkuLookup = (sku: string, isFromScanner: boolean = false) => {
-    setSkuId(sku);
-    if (!sku) {
-      setMatchedProduct(null);
-      return;
-    }
-
+    setSkuId(sku); if (!sku) { setMatchedProduct(null); return; }
     const product = products.find(p => p.sku === sku && p.storeId === currentStore.id);
-    if (product) {
-      setMatchedProduct(product);
-      setUnitPrice(product.price);
-    } else {
+    if (product) { setMatchedProduct(product); setUnitPrice(product.price); } 
+    else {
       setMatchedProduct(null);
-      if (isFromScanner) {
-        alert('Product not registered! Please add to inventory first.');
-        setSkuId('');
-      }
+      if (isFromScanner) { alert('Product not registered!'); setSkuId(''); }
       if (sku.length >= 8) {
-        const timer = setTimeout(() => {
-          if (!products.find(p => p.sku === sku && p.storeId === currentStore.id) && sku === skuId) {
-            alert('Product not registered! Please add to inventory first.');
-            setSkuId('');
-          }
-        }, 1500);
+        const timer = setTimeout(() => { if (!products.find(p => p.sku === sku && p.storeId === currentStore.id) && sku === skuId) { alert('Product not registered!'); setSkuId(''); } }, 1500);
         return () => clearTimeout(timer);
       }
     }
   };
 
-  const totalAmount = useMemo(() => {
-    const base = quantity * unitPrice;
-    const discounted = base * (1 - (discount / 100));
-    return discounted;
-  }, [quantity, unitPrice, discount]);
+  const totalAmount = useMemo(() => (quantity * unitPrice) * (1 - (discount / 100)), [quantity, unitPrice, discount]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!matchedProduct) return;
-    
-    if (quantity > matchedProduct.quantity) {
-      alert(`Error: Insufficient stock! Only ${matchedProduct.quantity} items left in inventory.`);
-      return;
-    }
+    if (quantity > matchedProduct.quantity) return alert(`Error: Insufficient stock! Only ${matchedProduct.quantity} left.`);
 
     const isCashSale = !customerId || customerId === '';
-    const totalCost = totalAmount;
+    const finalAmountPaid = isCashSale ? totalAmount : amountPaid;
+    const currentDue = isCashSale ? 0 : Math.max(0, totalAmount - finalAmountPaid);
     
-    const finalAmountPaid = isCashSale ? totalCost : amountPaid;
-    const currentDue = isCashSale ? 0 : Math.max(0, totalCost - finalAmountPaid);
-    const finalCustomerName = isCashSale ? 'Cash Sale (Walk-in)' : (customerName || 'Walk-in Customer');
-
     onAddSale({
       invoiceId,
       customerId: isCashSale ? (null as unknown as string) : customerId,
-      customerName: finalCustomerName,
+      customerName: isCashSale ? 'Cash Sale (Walk-in)' : (customerName || 'Walk-in Customer'),
       productId: matchedProduct.id,
       productName: matchedProduct.name,
       quantity,
       buyingPrice: matchedProduct.buyingPrice,
       unitPrice,
       discount,
-      totalPrice: totalCost,
+      totalPrice: totalAmount,
       amountPaid: finalAmountPaid,
       amountDue: currentDue,
+      paymentMethod: paymentMethod, 
       storeId: currentStore.id
     });
 
     onUpdateStock(matchedProduct.id, { quantity: matchedProduct.quantity - quantity });
+    if (!isCashSale && currentDue > 0) onUpdateCustomerDue(customerId, currentDue);
     
-    if (!isCashSale && currentDue > 0) {
-      onUpdateCustomerDue(customerId, currentDue);
-    }
-    
-    setShowSuccessToast(true);
-    setTimeout(() => setShowSuccessToast(false), 1500);
-    resetEntryForm();
+    setShowSuccessToast(true); setTimeout(() => setShowSuccessToast(false), 1500); resetEntryForm();
   };
 
   const getReturnableQty = (sale: Sale) => {
     if (!sale) return 0;
     const returns = sales.filter(s => s.invoiceId === `RET-${sale.invoiceId}` && s.productId === sale.productId);
-    const alreadyReturned = returns.reduce((acc, curr) => acc + Math.abs(curr.quantity), 0);
-    return sale.quantity - alreadyReturned;
+    return sale.quantity - returns.reduce((acc, curr) => acc + Math.abs(curr.quantity), 0);
   };
 
   const handleOpenReturn = (sale: Sale) => {
     const maxQty = getReturnableQty(sale);
-    if (maxQty <= 0) {
-        alert('All items from this record have already been returned.');
-        return;
-    }
-    setSaleToReturn(sale);
-    setReturnQty(1);
-    setIsReturnModalOpen(true);
+    if (maxQty <= 0) return alert('All items returned.');
+    setSaleToReturn(sale); setReturnQty(1); setIsReturnModalOpen(true);
   };
 
   const handleReturnSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!saleToReturn) return;
-
+    e.preventDefault(); if (!saleToReturn) return;
     const maxQty = getReturnableQty(saleToReturn);
-    if (returnQty <= 0 || returnQty > maxQty) {
-        alert(`Invalid return quantity. Maximum allowed is ${maxQty}.`);
-        return;
-    }
+    if (returnQty <= 0 || returnQty > maxQty) return alert(`Invalid quantity. Max: ${maxQty}.`);
 
-    const effectiveUnitPrice = saleToReturn.totalPrice / saleToReturn.quantity;
-    const refundAmount = returnQty * effectiveUnitPrice;
-    
-    let cashRefund = 0;
-    let dueAdjustment = 0;
+    const refundAmount = returnQty * (saleToReturn.totalPrice / saleToReturn.quantity);
+    let cashRefund = 0, dueAdjustment = 0;
 
     if (saleToReturn.customerId) {
         const customer = customers.find(c => c.id === saleToReturn.customerId);
         const currentDue = customer ? customer.totalDue : 0;
-        
         if (currentDue > 0) {
-            if (refundAmount >= currentDue) {
-                dueAdjustment = currentDue;
-                cashRefund = refundAmount - currentDue;
-            } else {
-                dueAdjustment = refundAmount;
-                cashRefund = 0;
-            }
-        } else {
-            cashRefund = refundAmount;
-        }
-    } else {
-        cashRefund = refundAmount; 
-    }
+            if (refundAmount >= currentDue) { dueAdjustment = currentDue; cashRefund = refundAmount - currentDue; } 
+            else { dueAdjustment = refundAmount; cashRefund = 0; }
+        } else cashRefund = refundAmount;
+    } else cashRefund = refundAmount; 
 
-    const returnInvoiceId = `RET-${saleToReturn.invoiceId}`;
-    
     onAddSale({
-        invoiceId: returnInvoiceId,
+        invoiceId: `RET-${saleToReturn.invoiceId}`,
         customerId: saleToReturn.customerId,
         customerName: saleToReturn.customerName,
         productId: saleToReturn.productId,
@@ -313,21 +226,16 @@ const Sales: React.FC<SalesProps> = ({
         totalPrice: -refundAmount,
         amountPaid: -cashRefund,
         amountDue: -dueAdjustment,
+        paymentMethod: saleToReturn.paymentMethod,
         storeId: currentStore.id
     });
 
     const product = products.find(p => p.id === saleToReturn.productId);
-    if (product) {
-        onUpdateStock(product.id, { quantity: product.quantity + returnQty });
-    }
+    if (product) onUpdateStock(product.id, { quantity: product.quantity + returnQty });
+    if (dueAdjustment > 0 && saleToReturn.customerId) onUpdateCustomerDue(saleToReturn.customerId, -dueAdjustment);
 
-    if (dueAdjustment > 0 && saleToReturn.customerId) {
-        onUpdateCustomerDue(saleToReturn.customerId, -dueAdjustment);
-    }
-
-    alert(`Return processed successfully!\nStock restored: +${returnQty}\nDue Adjusted: $${dueAdjustment.toFixed(2)}\nCash Refund: $${cashRefund.toFixed(2)}`);
-    setIsReturnModalOpen(false);
-    setSaleToReturn(null);
+    alert(`Return processed!\nRestored: +${returnQty}\nDue Adjusted: $${dueAdjustment.toFixed(2)}\nCash Refund: $${cashRefund.toFixed(2)}`);
+    setIsReturnModalOpen(false); setSaleToReturn(null);
   };
 
   const handleLedgerQuantityChange = (sale: Sale, newQty: number) => {
@@ -335,13 +243,8 @@ const Sales: React.FC<SalesProps> = ({
     const product = products.find(p => p.id === sale.productId);
     if (!product) return;
     const diff = sale.quantity - newQty;
-    if (diff < 0 && product.quantity < Math.abs(diff)) {
-      alert("Insufficient inventory for adjustment.");
-      return;
-    }
-    const currentEffectiveUnitPrice = sale.totalPrice / sale.quantity;
-    const newTotal = newQty * currentEffectiveUnitPrice;
-    onUpdateSale(sale.id, { quantity: newQty, totalPrice: newTotal });
+    if (diff < 0 && product.quantity < Math.abs(diff)) return alert("Insufficient inventory.");
+    onUpdateSale(sale.id, { quantity: newQty, totalPrice: newQty * (sale.totalPrice / sale.quantity) });
     onUpdateStock(product.id, { quantity: product.quantity + diff });
   };
 
@@ -350,98 +253,65 @@ const Sales: React.FC<SalesProps> = ({
     onUpdateSale(sale.id, { totalPrice: newTotal, unitPrice: newTotal / sale.quantity });
   };
 
-  const sessionSales = useMemo(() => {
-    return sales.filter(s => s.invoiceId === invoiceId && s.storeId === currentStore.id);
-  }, [sales, invoiceId, currentStore.id]);
+  const sessionSales = useMemo(() => sales.filter(s => s.invoiceId === invoiceId && s.storeId === currentStore.id), [sales, invoiceId, currentStore.id]);
+  const totalTurnover = useMemo(() => sessionSales.reduce((acc, curr) => acc + curr.totalPrice, 0), [sessionSales]);
 
-  const totalTurnover = useMemo(() => {
-    return sessionSales.reduce((acc, curr) => acc + curr.totalPrice, 0);
-  }, [sessionSales]);
-
- // 🔴 Updated todayStats logic for accurate local timezone calculations
   const todayStats = useMemo(() => {
-    // ১. লোকাল টাইমজোন অনুযায়ী আজকের ডেট বের করা হচ্ছে
     const todayDate = new Date();
-    
-    // ২. ডাটাবেসের ডেট আজকের ডেটের সাথে মিলে কি না তা চেক করার ফাংশন
     const isToday = (dateString: string) => {
       if (!dateString) return false;
       const d = new Date(dateString);
-      return d.getDate() === todayDate.getDate() &&
-             d.getMonth() === todayDate.getMonth() &&
-             d.getFullYear() === todayDate.getFullYear();
+      return d.getDate() === todayDate.getDate() && d.getMonth() === todayDate.getMonth() && d.getFullYear() === todayDate.getFullYear();
     };
 
-    // ৩. শুধুমাত্র আজকের সেলস এবং এক্সপেন্স ফিল্টার করা
-    const todaySales = sales.filter(s => 
-      s.storeId === currentStore.id && 
-      isToday(s.timestamp) && 
-      !s.invoiceId?.startsWith('VOID-')
-    );
+    const todaySales = sales.filter(s => s.storeId === currentStore.id && isToday(s.timestamp) && !s.invoiceId?.startsWith('VOID-'));
+    const todayExpenses = expenses.filter(e => e.storeId === currentStore.id && isToday(e.timestamp));
     
-    const todayExpenses = expenses.filter(e => 
-      e.storeId === currentStore.id && 
-      isToday(e.timestamp)
-    );
-    
-    let totalSales = 0;
-    let todayCash = 0;
-    let totalProfit = 0;
-    let totalExpense = 0;
-    let wastageLoss = 0;
+    let totalSales = 0, todayCash = 0, todayCard = 0, todayBkash = 0, todayNagad = 0, totalProfit = 0, totalExpense = 0, wastageLoss = 0;
 
-    // ৪. আজকের সেলস থেকে হিসাব বের করা
     todaySales.forEach(s => {
-      const isPayment = s.invoiceId?.startsWith('PAY-') || s.productId === 'PAYMENT_RECEIVED' || s.productId === 'SUPPLIER_PAYMENT';
+      const amt = Number(s.amountPaid || 0);
+      const method = s.paymentMethod || 'Cash';
       
-      // Number() ব্যবহার করে নিশ্চিত করা হচ্ছে যে এটি সংখ্যা হিসেবেই যোগ হবে
-      todayCash += Number(s.amountPaid || 0);
+      if (method === 'Card') todayCard += amt;
+      else if (method === 'bKash') todayBkash += amt;
+      else if (method === 'Nagad') todayNagad += amt;
+      else todayCash += amt;
 
+      const isPayment = s.invoiceId?.startsWith('PAY-') || s.productId === 'PAYMENT_RECEIVED' || s.productId === 'SUPPLIER_PAYMENT';
       if (!isPayment) {
         totalSales += Number(s.totalPrice || 0);
-        
         const product = products.find(p => p.id === s.productId);
-        const buyingPrice = Number(product ? product.buyingPrice : (s.buyingPrice || 0));
-        const cost = buyingPrice * Number(s.quantity || 0);
-        
-        totalProfit += (Number(s.totalPrice || 0) - cost);
+        totalProfit += (Number(s.totalPrice || 0) - (Number(product ? product.buyingPrice : (s.buyingPrice || 0)) * Number(s.quantity || 0)));
       }
     });
 
-    // ৫. আজকের এক্সপেন্স বা খরচ হিসাব করা
-    todayExpenses.forEach(e => {
-      if (e.category === 'Wastage') {
-         wastageLoss += Number(e.amount || 0);
-      } else {
-         totalExpense += Number(e.amount || 0);
-      }
-    });
+    todayExpenses.forEach(e => e.category === 'Wastage' ? wastageLoss += Number(e.amount || 0) : totalExpense += Number(e.amount || 0));
 
-    // ৬. চূড়ান্ত হিসাব তৈরি
-    totalProfit -= wastageLoss; 
-    const netBalance = todayCash - totalExpense;
+    const netBalance = (todayCash + todayCard + todayBkash + todayNagad) - totalExpense;
 
-    return { totalSales, todayCash, totalProfit, totalExpense, netBalance };
+    return { totalSales, todayCash, todayCard, todayBkash, todayNagad, totalProfit: totalProfit - wastageLoss, totalExpense, netBalance };
   }, [sales, products, expenses, currentStore.id]);
+
   const exportToCSV = () => {
-    const headers = ['Invoice', 'Customer', 'Product', 'Qty', 'Unit Price', 'Discount', 'Total', 'Paid', 'Due', 'Date'];
+    const headers = ['Invoice', 'Customer', 'Product', 'Qty', 'Unit Price', 'Discount', 'Total', 'Paid', 'Due', 'Payment Method', 'Date'];
     const data = sales
       .filter(s => s.storeId === currentStore.id)
-      .map(s => {
-        const isPayment = s.invoiceId?.startsWith('PAY-') || s.productId === 'PAYMENT_RECEIVED';
-        const isVoid = s.invoiceId?.startsWith('VOID-');
-        const isReturn = s.invoiceId?.startsWith('RET-');
+      .map(saleRecord => {
+        const isPayment = saleRecord.invoiceId?.startsWith('PAY-') || saleRecord.productId === 'PAYMENT_RECEIVED';
+        const isVoid = saleRecord.invoiceId?.startsWith('VOID-');
         return [
-          s.invoiceId,
-          s.customerName,
-          isPayment ? 'DUE COLLECTION' : s.productName,
-          isPayment ? '-' : (isVoid ? '0' : s.quantity),
-          isPayment ? '-' : (isVoid ? '0.00' : s.unitPrice.toFixed(2)),
-          isPayment ? '-' : s.discount + '%',
-          isPayment ? '-' : (isVoid ? '0.00' : s.totalPrice.toFixed(2)),
-          (s.amountPaid || 0).toFixed(2),
-          (s.amountDue || 0).toFixed(2),
-          new Date(s.timestamp).toLocaleDateString()
+          saleRecord.invoiceId,
+          saleRecord.customerName,
+          isPayment ? 'DUE COLLECTION' : saleRecord.productName,
+          isPayment ? '-' : (isVoid ? '0' : saleRecord.quantity),
+          isPayment ? '-' : (isVoid ? '0.00' : saleRecord.unitPrice.toFixed(2)),
+          isPayment ? '-' : saleRecord.discount + '%',
+          isPayment ? '-' : (isVoid ? '0.00' : saleRecord.totalPrice.toFixed(2)),
+          (saleRecord.amountPaid || 0).toFixed(2),
+          (saleRecord.amountDue || 0).toFixed(2),
+          saleRecord.paymentMethod || 'Cash',
+          new Date(saleRecord.timestamp).toLocaleDateString()
         ];
       });
     
@@ -457,28 +327,16 @@ const Sales: React.FC<SalesProps> = ({
     document.body.removeChild(link);
   };
 
-  const handlePrint = (invId: string) => {
-    setSelectedInvoiceForPrint(invId);
-    setShowPrintModal(true);
-  };
+  const handlePrint = (invId: string) => { setSelectedInvoiceForPrint(invId); setShowPrintModal(true); };
 
   if (!isSessionActive) {
     const historicalSales = sales
       .filter(s => s.storeId === currentStore.id)
-      .filter(s => {
-        const matchesSearch = s.customerName.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                             s.invoiceId.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                             s.productName.toLowerCase().includes(searchTerm.toLowerCase());
-        const matchesDate = !filterDate || s.timestamp.startsWith(filterDate);
-        return matchesSearch && matchesDate;
-      })
+      .filter(s => (s.customerName.toLowerCase().includes(searchTerm.toLowerCase()) || s.invoiceId.toLowerCase().includes(searchTerm.toLowerCase()) || s.productName.toLowerCase().includes(searchTerm.toLowerCase())) && (!filterDate || s.timestamp.startsWith(filterDate)))
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()); 
 
     const totalPages = Math.ceil(historicalSales.length / ITEMS_PER_PAGE);
-    const paginatedSales = historicalSales.slice(
-      (currentPage - 1) * ITEMS_PER_PAGE,
-      currentPage * ITEMS_PER_PAGE
-    );
+    const paginatedSales = historicalSales.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
 
     return (
       <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-700">
@@ -496,23 +354,39 @@ const Sales: React.FC<SalesProps> = ({
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
-          <div className="bg-slate-900/50 backdrop-blur-md p-5 rounded-[2rem] border border-slate-800 shadow-xl flex items-center gap-4 group hover:border-slate-500/30 transition-all">
+          <div className="bg-slate-900/50 backdrop-blur-md p-5 rounded-3xl border border-slate-800 shadow-xl flex items-center gap-4 group hover:border-slate-500/30 transition-all">
             <div className="w-10 h-10 bg-slate-800 rounded-xl flex items-center justify-center text-slate-400 group-hover:scale-110 transition-transform"><ShoppingCart className="w-5 h-5" /></div>
             <div><p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Today's Sales</p><h3 className="text-lg font-black text-white tracking-tighter">${todayStats.totalSales.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3></div>
           </div>
-          <div className="bg-slate-900/50 backdrop-blur-md p-5 rounded-[2rem] border border-slate-800 shadow-xl flex items-center gap-4 group hover:border-amber-500/30 transition-all">
+          
+          <div onClick={() => setShowMethodBreakdown(!showMethodBreakdown)} className="bg-slate-900/50 backdrop-blur-md p-5 rounded-3xl border border-slate-800 shadow-xl flex items-center gap-4 group hover:border-amber-500/30 transition-all cursor-pointer relative z-10">
             <div className="w-10 h-10 bg-amber-400/10 rounded-xl flex items-center justify-center text-amber-400 group-hover:scale-110 transition-transform"><DollarSign className="w-5 h-5" /></div>
-            <div><p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Today's Cash</p><h3 className="text-lg font-black text-amber-400 tracking-tighter">${todayStats.todayCash.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3></div>
+            <div>
+              <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1 flex items-center gap-1">Today's Collection <ChevronDown className={`w-3 h-3 transition-transform ${showMethodBreakdown ? 'rotate-180' : ''}`} /></p>
+              <h3 className="text-lg font-black text-amber-400 tracking-tighter">${(todayStats.todayCash + todayStats.todayCard + todayStats.todayBkash + todayStats.todayNagad).toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3>
+            </div>
+            
+            <AnimatePresence>
+              {showMethodBreakdown && (
+                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }} className="absolute top-full left-0 w-full mt-2 bg-slate-800 border border-slate-700 rounded-2xl p-4 shadow-2xl z-50">
+                   <div className="flex justify-between text-[11px] font-black text-slate-300 mb-2 uppercase tracking-widest"><span>Cash:</span> <span className="text-emerald-400">${todayStats.todayCash.toFixed(2)}</span></div>
+                   <div className="flex justify-between text-[11px] font-black text-slate-300 mb-2 uppercase tracking-widest"><span>Card:</span> <span className="text-indigo-400">${todayStats.todayCard.toFixed(2)}</span></div>
+                   <div className="flex justify-between text-[11px] font-black text-slate-300 mb-2 uppercase tracking-widest"><span>bKash:</span> <span className="text-pink-400">${todayStats.todayBkash.toFixed(2)}</span></div>
+                   <div className="flex justify-between text-[11px] font-black text-slate-300 uppercase tracking-widest"><span>Nagad:</span> <span className="text-orange-400">${todayStats.todayNagad.toFixed(2)}</span></div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
-          <div className="bg-slate-900/50 backdrop-blur-md p-5 rounded-[2rem] border border-slate-800 shadow-xl flex items-center gap-4 group hover:border-emerald-500/30 transition-all">
+
+          <div className="bg-slate-900/50 backdrop-blur-md p-5 rounded-3xl border border-slate-800 shadow-xl flex items-center gap-4 group hover:border-emerald-500/30 transition-all">
             <div className="w-10 h-10 bg-emerald-400/10 rounded-xl flex items-center justify-center text-emerald-400 group-hover:scale-110 transition-transform"><TrendingUp className="w-5 h-5" /></div>
             <div><p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Today's Profit</p><h3 className="text-lg font-black text-emerald-400 tracking-tighter">${todayStats.totalProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3></div>
           </div>
-          <div className="bg-slate-900/50 backdrop-blur-md p-5 rounded-[2rem] border border-slate-800 shadow-xl flex items-center gap-4 group hover:border-rose-500/30 transition-all">
+          <div className="bg-slate-900/50 backdrop-blur-md p-5 rounded-3xl border border-slate-800 shadow-xl flex items-center gap-4 group hover:border-rose-500/30 transition-all">
             <div className="w-10 h-10 bg-rose-400/10 rounded-xl flex items-center justify-center text-rose-400 group-hover:scale-110 transition-transform"><Zap className="w-5 h-5" /></div>
             <div><p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Today's Expense</p><h3 className="text-lg font-black text-rose-400 tracking-tighter">${todayStats.totalExpense.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3></div>
           </div>
-          <div className="bg-slate-900/50 backdrop-blur-md p-5 rounded-[2rem] border border-slate-800 shadow-xl flex items-center gap-4 group hover:border-blue-500/30 transition-all">
+          <div className="bg-slate-900/50 backdrop-blur-md p-5 rounded-3xl border border-slate-800 shadow-xl flex items-center gap-4 group hover:border-blue-500/30 transition-all">
             <div className="w-10 h-10 bg-blue-400/10 rounded-xl flex items-center justify-center text-blue-400 group-hover:scale-110 transition-transform"><LayoutDashboard className="w-5 h-5" /></div>
             <div><p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Net Balance</p><h3 className={`text-lg font-black tracking-tighter ${todayStats.netBalance >= 0 ? 'text-blue-400' : 'text-rose-400'}`}>${todayStats.netBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3></div>
           </div>
@@ -546,43 +420,44 @@ const Sales: React.FC<SalesProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/50">
-                {paginatedSales.map((sale) => {
-                  const isPayment = sale.invoiceId?.startsWith('PAY-') || sale.productId === 'PAYMENT_RECEIVED';
-                  const isVoid = sale.invoiceId?.startsWith('VOID-');
-                  const isReturn = sale.invoiceId?.startsWith('RET-');
+                {paginatedSales.map((saleRecord) => {
+                  const isPayment = saleRecord.invoiceId?.startsWith('PAY-') || saleRecord.productId === 'PAYMENT_RECEIVED';
+                  const isVoid = saleRecord.invoiceId?.startsWith('VOID-');
+                  const isReturn = saleRecord.invoiceId?.startsWith('RET-');
 
                   return (
-                    <tr key={sale.id} className={`group hover:bg-slate-800/40 transition-all ${isVoid ? 'opacity-50 grayscale' : ''} ${isReturn ? 'bg-orange-500/5 hover:bg-orange-500/10' : ''}`}>
-                      <td className="px-6 py-5 font-bold text-slate-400 text-xs whitespace-nowrap">{new Date(sale.timestamp).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+                    <tr key={saleRecord.id} className={`group hover:bg-slate-800/40 transition-all ${isVoid ? 'opacity-50 grayscale' : ''} ${isReturn ? 'bg-orange-500/5 hover:bg-orange-500/10' : ''}`}>
+                      <td className="px-6 py-5 font-bold text-slate-400 text-xs whitespace-nowrap">{new Date(saleRecord.timestamp).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
                       <td className="px-6 py-5 font-black text-xs tracking-tighter">
-                        {isVoid ? <span className="text-rose-500 line-through">{sale.invoiceId}</span> : 
-                         isReturn ? <span className="text-orange-400">{sale.invoiceId}</span> : 
-                         <span className="text-white">{sale.invoiceId}</span>}
+                        {isVoid ? <span className="text-rose-500 line-through">{saleRecord.invoiceId}</span> : 
+                         isReturn ? <span className="text-orange-400">{saleRecord.invoiceId}</span> : 
+                         <span className="text-white">{saleRecord.invoiceId}</span>}
                       </td>
-                      <td className="px-6 py-5 text-sm font-bold text-slate-300">{sale.customerName}</td>
-                      <td className="px-6 py-5 text-sm text-slate-400">
-                        {isPayment ? <span className="text-blue-400 italic font-bold">Due Collection</span> : isReturn ? <span className="text-orange-400 italic font-bold">{sale.productName}</span> : sale.productName}
+                      <td className="px-6 py-5 text-sm font-bold text-slate-300">{saleRecord.customerName}</td>
+                      <td className="px-6 py-5 text-sm text-slate-400 flex flex-col">
+                        {isPayment ? <span className="text-blue-400 italic font-bold">Due Collection</span> : isReturn ? <span className="text-orange-400 italic font-bold">{saleRecord.productName}</span> : saleRecord.productName}
+                        {saleRecord.paymentMethod && <span className="text-[9px] uppercase tracking-widest text-emerald-400 font-black mt-1">[{saleRecord.paymentMethod}]</span>}
                       </td>
-                      <td className="px-6 py-5 text-center font-black text-white text-sm">{isPayment ? '-' : (isVoid ? '0' : sale.quantity)}</td>
+                      <td className="px-6 py-5 text-center font-black text-white text-sm">{isPayment ? '-' : (isVoid ? '0' : saleRecord.quantity)}</td>
                       <td className="px-6 py-5 text-right font-black text-sm">
                         {isVoid ? <span className="text-rose-500 bg-rose-500/10 px-3 py-1.5 rounded-xl text-[10px] uppercase tracking-widest border border-rose-500/20">VOIDED</span> : 
                          isReturn ? <span className="text-orange-400 bg-orange-500/10 px-3 py-1.5 rounded-xl text-[10px] uppercase tracking-widest border border-orange-500/20">REFUND</span> : 
-                         isPayment ? <span className="text-blue-400 bg-blue-500/10 px-3 py-1.5 rounded-xl text-[10px] uppercase tracking-widest">+ ${sale.amountPaid?.toFixed(2)}</span> : 
-                         <div className="text-emerald-400"><p>${sale.totalPrice.toFixed(2)}</p>{sale.amountDue > 0 && <p className="text-rose-400 text-[9px] uppercase tracking-tighter mt-1">Due: ${sale.amountDue.toFixed(2)}</p>}</div>}
+                         isPayment ? <span className="text-blue-400 bg-blue-500/10 px-3 py-1.5 rounded-xl text-[10px] uppercase tracking-widest">+ ${saleRecord.amountPaid?.toFixed(2)}</span> : 
+                         <div className="text-emerald-400"><p>${saleRecord.totalPrice.toFixed(2)}</p>{saleRecord.amountDue > 0 && <p className="text-rose-400 text-[9px] uppercase tracking-tighter mt-1">Due: ${saleRecord.amountDue.toFixed(2)}</p>}</div>}
                       </td>
                       <td className="px-6 py-5 text-right">
                         <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                           {!isPayment && !isVoid && !isReturn && (
-                            <button onClick={() => handleOpenReturn(sale)} title="Return Item" className="p-2 text-slate-600 hover:text-orange-400"><RotateCcw className="w-4 h-4" /></button>
+                            <button onClick={() => handleOpenReturn(saleRecord)} title="Return Item" className="p-2 text-slate-600 hover:text-orange-400"><RotateCcw className="w-4 h-4" /></button>
                           )}
                           {!isPayment && !isVoid && !isReturn && (
-                            <button onClick={() => handlePrint(sale.invoiceId)} className="p-2 text-slate-600 hover:text-amber-400"><Printer className="w-4 h-4" /></button>
+                            <button onClick={() => handlePrint(saleRecord.invoiceId)} className="p-2 text-slate-600 hover:text-amber-400"><Printer className="w-4 h-4" /></button>
                           )}
                           {canDelete && !isVoid && !isReturn && (
-                            sale.amountPaid > 0 && !isPayment ? (
+                            saleRecord.amountPaid > 0 && !isPayment ? (
                               <button title="Cannot void: Payment exists. Reverse payment first." className="p-2 text-slate-600 cursor-not-allowed opacity-50"><AlertOctagon className="w-4 h-4" /></button>
                             ) : (
-                              <button onClick={() => onDeleteSale(sale.id)} className="p-2 text-slate-600 hover:text-rose-500"><Trash2 className="w-4 h-4" /></button>
+                              <button onClick={() => onDeleteSale(saleRecord.id)} className="p-2 text-slate-600 hover:text-rose-500"><Trash2 className="w-4 h-4" /></button>
                             )
                           )}
                         </div>
@@ -623,7 +498,6 @@ const Sales: React.FC<SalesProps> = ({
 
                      <div className="space-y-2">
                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2">Return Quantity</label>
-                         {/* 🔴 Fixed: onWheel and onFocus added */}
                          <input type="number" min="1" max={getReturnableQty(saleToReturn)} value={returnQty} onWheel={(e) => (e.target as HTMLInputElement).blur()} onFocus={e => e.target.select()} onChange={e => setReturnQty(parseInt(e.target.value) || 1)} className="w-full px-5 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-orange-400 font-black focus:border-orange-500" />
                          <p className="text-[10px] text-orange-500/80 font-bold text-right mr-2 mt-1">Max returnable: {getReturnableQty(saleToReturn)}</p>
                      </div>
@@ -729,7 +603,7 @@ const Sales: React.FC<SalesProps> = ({
 
   return (
     <div className="h-[calc(100vh-140px)] flex flex-col lg:flex-row gap-8 animate-in fade-in zoom-in-95 duration-500 overflow-hidden">
-      <div className="lg:w-[450px] flex flex-col bg-slate-900 border border-slate-800 rounded-[2.5rem] shadow-2xl p-8 overflow-y-auto custom-scrollbar relative">
+      <div className="lg:w-[450px] flex flex-col bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl p-8 overflow-y-auto custom-scrollbar relative">
         <div className="mb-6 flex items-center justify-between">
           <div><h2 className="text-xl font-black text-white tracking-tight uppercase">New Sale Session</h2><p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em]">{invoiceId}</p></div>
           <div className="flex items-center gap-2 px-3 py-1 bg-amber-400/10 border border-amber-400/20 rounded-full"><div className="w-2 h-2 bg-amber-400 rounded-full animate-pulse" /><span className="text-[10px] font-black text-amber-400 uppercase tracking-widest">Active Entry</span></div>
@@ -741,7 +615,7 @@ const Sales: React.FC<SalesProps> = ({
 
         <form onSubmit={handleSubmit} className="space-y-6 flex-1">
           <div className="space-y-2">
-            <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2 text-amber-500">sku identifier</label>
+            <label className="text-[10px] font-black text-amber-500 uppercase tracking-[0.2em] ml-2">sku identifier</label>
             <div className="relative group">
               <ScanLine className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-amber-400 transition-colors" />
               <input required value={skuId} autoFocus onChange={e => handleSkuLookup(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault(); }} placeholder="Search SKU..." className={`w-full pl-12 pr-14 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-bold focus:border-amber-400 amber-glow ${matchedProduct ? 'bg-slate-800/50 border-amber-400/30' : ''}`} />
@@ -761,7 +635,6 @@ const Sales: React.FC<SalesProps> = ({
 
           {scannerError && <div className="bg-rose-500/10 border border-rose-500/20 p-4 rounded-2xl flex items-center gap-3 text-rose-400 text-xs font-bold"><CameraOff className="w-4 h-4" /><p>{scannerError}</p></div>}
 
-          {/* 🔴 আপনার অরিজিনাল SKU ইনফরমেশন লজিক 🔴 */}
           {matchedProduct && (
             <div className="grid grid-cols-1 gap-4 animate-in slide-in-from-top-2">
               <div className="space-y-2"><label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Name</label><div className="w-full px-5 py-3.5 bg-slate-800/50 border border-slate-800 rounded-xl text-slate-400 font-bold text-xs truncate select-none italic">{matchedProduct.name}</div></div>
@@ -785,7 +658,6 @@ const Sales: React.FC<SalesProps> = ({
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">volume (qty)</label>
               <div className="relative group">
                 <Hash className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-amber-400 transition-colors" />
-                {/* 🔴 Fixed: onWheel and onFocus added */}
                 <input required type="number" min="1" max={matchedProduct?.quantity || 1} value={quantity} onWheel={(e) => (e.target as HTMLInputElement).blur()} onFocus={e => e.target.select()} onChange={e => setQuantity(parseInt(e.target.value) || 0)} className="w-full pl-12 pr-4 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 font-black focus:border-amber-400 amber-glow" />
               </div>
             </div>
@@ -793,7 +665,6 @@ const Sales: React.FC<SalesProps> = ({
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">selling price ($)</label>
               <div className="relative group">
                 <DollarSign className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-amber-400 transition-colors" />
-                {/* 🔴 Fixed: onWheel and onFocus added */}
                 <input required type="number" step="0.01" value={unitPrice} onWheel={(e) => (e.target as HTMLInputElement).blur()} onFocus={e => e.target.select()} onChange={e => setUnitPrice(parseFloat(e.target.value) || 0)} className="w-full pl-12 pr-4 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-emerald-400 font-black focus:border-amber-400 amber-glow" />
               </div>
             </div>
@@ -802,17 +673,25 @@ const Sales: React.FC<SalesProps> = ({
           <div className={`grid grid-cols-2 gap-4 transition-all duration-500 ${!matchedProduct ? 'opacity-30 pointer-events-none blur-[1px]' : ''}`}>
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">discount (%)</label>
-              {/* 🔴 Fixed: onWheel and onFocus added */}
               <input type="number" min="0" max="100" value={discount} onWheel={(e) => (e.target as HTMLInputElement).blur()} onFocus={e => e.target.select()} onChange={e => setDiscount(parseFloat(e.target.value) || 0)} className="w-full px-6 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-rose-500 font-black focus:border-amber-400 amber-glow" />
             </div>
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">amount paid ($)</label>
+              <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Payment Method</label>
+              <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)} className="w-full px-4 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-white font-bold focus:border-amber-400 appearance-none text-center uppercase tracking-widest text-[10px]">
+                <option value="Cash">CASH</option>
+                <option value="Card">CARD</option>
+                <option value="bKash">bKash</option>
+                <option value="Nagad">NAGAD</option>
+              </select>
+            </div>
+          </div>
+          
+          <div className={`space-y-2 transition-all duration-500 ${!matchedProduct ? 'opacity-30 pointer-events-none blur-[1px]' : ''}`}>
+              <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2">Amount Paid ($)</label>
               <div className="relative group">
                 <CreditCard className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-amber-400 transition-colors" />
-                {/* 🔴 Fixed: onWheel and onFocus added */}
                 <input type="number" step="0.01" disabled={!customerId} value={!customerId ? totalAmount : amountPaid} onWheel={(e) => (e.target as HTMLInputElement).blur()} onFocus={e => e.target.select()} onChange={e => setAmountPaid(parseFloat(e.target.value) || 0)} className={`w-full pl-12 pr-4 py-4 rounded-2xl outline-none font-black transition-all ${!customerId ? 'bg-emerald-900/20 border border-emerald-500/30 text-emerald-500 cursor-not-allowed' : 'bg-slate-800 border border-slate-700 text-amber-400 focus:border-amber-400 amber-glow'}`} />
               </div>
-            </div>
           </div>
 
           <div className={`bg-slate-950 p-6 rounded-3xl border border-slate-800 mt-auto ${!matchedProduct ? 'opacity-50 grayscale' : ''}`}>
@@ -823,8 +702,8 @@ const Sales: React.FC<SalesProps> = ({
           </div>
 
           <div className="pt-4 flex flex-col gap-3">
-            <button type="submit" disabled={!matchedProduct} className={`w-full py-5 rounded-[2rem] font-black shadow-2xl transition-all flex items-center justify-center gap-3 uppercase tracking-widest text-xs ${matchedProduct ? 'bg-gradient-to-r from-amber-400 to-amber-600 text-slate-950 shadow-amber-900/20 hover:scale-[1.02]' : 'bg-slate-800 text-slate-500 cursor-not-allowed'}`}>confirm settlement <ArrowRight className="w-5 h-5" /></button>
-            <button type="button" onClick={() => { setIsSessionActive(false); setInvoiceId(''); setCustomerName(''); resetEntryForm(); }} className="w-full py-4 bg-slate-800 border border-slate-700 text-slate-400 rounded-[2rem] font-black hover:text-white transition-all text-[10px] uppercase tracking-[0.2em] shadow-xl">complete</button>
+            <button type="submit" disabled={!matchedProduct} className={`w-full py-5 rounded-3xl font-black shadow-2xl transition-all flex items-center justify-center gap-3 uppercase tracking-widest text-xs ${matchedProduct ? 'bg-gradient-to-r from-amber-400 to-amber-600 text-slate-950 shadow-amber-900/20 hover:scale-[1.02]' : 'bg-slate-800 text-slate-500 cursor-not-allowed'}`}>confirm settlement <ArrowRight className="w-5 h-5" /></button>
+            <button type="button" onClick={() => { setIsSessionActive(false); setInvoiceId(''); setCustomerName(''); resetEntryForm(); }} className="w-full py-4 bg-slate-800 border border-slate-700 text-slate-400 rounded-3xl font-black hover:text-white transition-all text-[10px] uppercase tracking-[0.2em] shadow-xl">complete</button>
           </div>
         </form>
       </div>
@@ -843,18 +722,19 @@ const Sales: React.FC<SalesProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/50">
-                {sessionSales.map((sale) => (
-                    <tr key={sale.id} className="group hover:bg-slate-800/40 transition-all animate-in slide-in-from-right-4 duration-300">
-                      <td className="px-6 py-5"><p className="font-bold text-white text-sm truncate max-w-[180px]">{sale.productName}</p><p className="text-[10px] text-slate-500 font-bold uppercase tracking-tighter italic">{sale.customerName}</p></td>
+                {sessionSales.map((sessionSale) => (
+                    <tr key={sessionSale.id} className="group hover:bg-slate-800/40 transition-all animate-in slide-in-from-right-4 duration-300">
+                      <td className="px-6 py-5">
+                         <p className="font-bold text-white text-sm truncate max-w-xs">{sessionSale.productName}</p>
+                         <p className="text-[10px] text-slate-500 font-bold uppercase tracking-tighter italic">{sessionSale.customerName}</p>
+                      </td>
                       <td className="px-6 py-5 text-center">
-                         {/* 🔴 Fixed: onWheel and onFocus added */}
-                         <input type="number" min="1" value={sale.quantity} onWheel={(e) => (e.target as HTMLInputElement).blur()} onFocus={e => e.target.select()} onChange={(e) => handleLedgerQuantityChange(sale, parseInt(e.target.value))} className="w-20 bg-slate-800 border border-slate-700 rounded-xl text-center font-black text-amber-400 text-sm focus:border-amber-400 outline-none p-1.5 shadow-inner" />
+                         <input type="number" min="1" value={sessionSale.quantity} onWheel={(e) => (e.target as HTMLInputElement).blur()} onFocus={e => e.target.select()} onChange={(e) => handleLedgerQuantityChange(sessionSale, parseInt(e.target.value))} className="w-20 bg-slate-800 border border-slate-700 rounded-xl text-center font-black text-amber-400 text-sm focus:border-amber-400 outline-none p-1.5 shadow-inner" />
                       </td>
                       <td className="px-6 py-5 text-right">
                          <div className="flex items-center justify-end gap-1">
                             <span className="text-emerald-400 text-xs font-bold">$</span>
-                            {/* 🔴 Fixed: onWheel and onFocus added */}
-                            <input type="number" step="0.01" value={sale.totalPrice} onWheel={(e) => (e.target as HTMLInputElement).blur()} onFocus={e => e.target.select()} onChange={(e) => handleLedgerTotalChange(sale, parseFloat(e.target.value))} className="w-28 bg-slate-800 border border-slate-700 rounded-xl text-right font-black text-emerald-400 text-sm focus:border-emerald-400 outline-none p-1.5 shadow-inner" />
+                            <input type="number" step="0.01" value={sessionSale.totalPrice} onWheel={(e) => (e.target as HTMLInputElement).blur()} onFocus={e => e.target.select()} onChange={(e) => handleLedgerTotalChange(sessionSale, parseFloat(e.target.value))} className="w-28 bg-slate-800 border border-slate-700 rounded-xl text-right font-black text-emerald-400 text-sm focus:border-emerald-400 outline-none p-1.5 shadow-inner" />
                          </div>
                       </td>
                     </tr>

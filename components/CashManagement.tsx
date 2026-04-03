@@ -4,20 +4,17 @@ import {
   Building2, 
   Wallet, 
   ArrowRightLeft, 
-  ArrowDownToLine, 
   ArrowUpFromLine, 
   History,
-  Search,
-  CheckCircle2,
-  X
+  X,
+  CreditCard
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface CashManagementProps {
   currentStore: Store;
   transactions: CashTransaction[];
-  netBalance: number; // Dashboard থেকে পাঠানো বর্তমান ক্যাশ ব্যালেন্স
-  bankBalance: number; // Dashboard থেকে পাঠানো বর্তমান ব্যাংক ব্যালেন্স
+  balances?: { cash: number, bank: number, card: number, bkash: number, nagad: number }; 
   onAddTransaction: (transaction: Omit<CashTransaction, 'id' | 'timestamp'>) => void | Promise<void>;
   onDeleteTransaction: (id: string) => void | Promise<void>;
   canEdit: boolean;
@@ -26,19 +23,18 @@ interface CashManagementProps {
 const CashManagement: React.FC<CashManagementProps> = ({
   currentStore,
   transactions,
-  netBalance,
-  bankBalance,
+  // 🔴 FAILSAFE: কোনো কারণে ডেটা না পেলেও অ্যাপ ক্র্যাশ করবে না 🔴
+  balances = { cash: 0, bank: 0, card: 0, bkash: 0, nagad: 0 },
   onAddTransaction,
-  onDeleteTransaction,
   canEdit
 }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   
-  // Form States
-  const [type, setType] = useState<'BANK_DEPOSIT' | 'BANK_WITHDRAWAL' | 'CASH_OUT'>('BANK_DEPOSIT');
-  const [source, setSource] = useState<'CASH' | 'BANK'>('CASH');
+  const [type, setType] = useState<'TRANSFER' | 'CASH_OUT'>('TRANSFER');
+  const [source, setSource] = useState<string>('CASH');
+  const [destination, setDestination] = useState<string>('BANK');
   const [amount, setAmount] = useState<number | ''>('');
   const [description, setDescription] = useState('');
 
@@ -58,21 +54,22 @@ const CashManagement: React.FC<CashManagementProps> = ({
     e.preventDefault();
     if (!amount || amount <= 0) return;
 
-    // Validation (টাকা না থাকলে যেন ট্রান্সফার করতে না পারে)
-    if (type === 'BANK_DEPOSIT' && amount > netBalance) {
-      alert(`Insufficient Cash! You only have $${netBalance.toFixed(2)} in cash drawer.`);
-      return;
+    if (type === 'TRANSFER' && source === destination) {
+       alert("Source and Destination cannot be the same!");
+       return;
     }
-    if (type === 'BANK_WITHDRAWAL' && amount > bankBalance) {
-      alert(`Insufficient Bank Balance! You only have $${bankBalance.toFixed(2)} in the bank.`);
-      return;
-    }
-    if (type === 'CASH_OUT' && source === 'CASH' && amount > netBalance) {
-      alert(`Insufficient Cash! You only have $${netBalance.toFixed(2)} in cash drawer.`);
-      return;
-    }
-    if (type === 'CASH_OUT' && source === 'BANK' && amount > bankBalance) {
-      alert(`Insufficient Bank Balance! You only have $${bankBalance.toFixed(2)} in the bank.`);
+
+    const getBalance = (method: string) => {
+        if (method === 'CASH') return balances.cash;
+        if (method === 'BANK') return balances.bank;
+        if (method === 'CARD') return balances.card;
+        if (method === 'BKASH') return balances.bkash;
+        if (method === 'NAGAD') return balances.nagad;
+        return 0;
+    };
+
+    if (amount > getBalance(source)) {
+      alert(`Insufficient Funds! You only have $${getBalance(source).toFixed(2)} in ${source}.`);
       return;
     }
 
@@ -81,9 +78,10 @@ const CashManagement: React.FC<CashManagementProps> = ({
       await onAddTransaction({
         storeId: currentStore.id,
         type,
-        source: type === 'BANK_DEPOSIT' ? 'CASH' : (type === 'BANK_WITHDRAWAL' ? 'BANK' : source),
+        source: source,
+        destination: type === 'TRANSFER' ? destination : undefined,
         amount: Number(amount),
-        description
+        description: description || (type === 'CASH_OUT' ? 'Owner Withdrawal' : 'Fund Transfer')
       });
       setIsModalOpen(false);
       setAmount('');
@@ -114,19 +112,37 @@ const CashManagement: React.FC<CashManagementProps> = ({
         )}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 shadow-xl flex items-center gap-5">
-          <div className="w-14 h-14 bg-amber-400/10 rounded-2xl flex items-center justify-center text-amber-400"><Wallet className="w-6 h-6" /></div>
-          <div><p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Net Balance (Cash)</p><h3 className="text-2xl font-black text-amber-400">${netBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3></div>
-        </div>
-        <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 shadow-xl flex items-center gap-5">
-          <div className="w-14 h-14 bg-blue-400/10 rounded-2xl flex items-center justify-center text-blue-400"><Building2 className="w-6 h-6" /></div>
-          <div><p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Bank Balance</p><h3 className="text-2xl font-black text-blue-400">${bankBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3></div>
-        </div>
-        <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-slate-800 shadow-xl flex items-center gap-5">
-          <div className="w-14 h-14 bg-rose-400/10 rounded-2xl flex items-center justify-center text-rose-400"><ArrowUpFromLine className="w-6 h-6" /></div>
-          <div><p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Total Cash Out</p><h3 className="text-2xl font-black text-rose-400">${totalCashOut.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3></div>
-        </div>
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+         <div className="bg-slate-900/50 backdrop-blur-md p-5 rounded-4xl border border-slate-800 shadow-xl flex flex-col justify-center text-center">
+            <div className="w-10 h-10 bg-amber-400/10 rounded-xl flex items-center justify-center text-amber-400 mx-auto mb-2"><Wallet className="w-5 h-5" /></div>
+            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Cash</p>
+            <h3 className="text-lg font-black text-amber-400">${balances.cash.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3>
+         </div>
+         <div className="bg-slate-900/50 backdrop-blur-md p-5 rounded-4xl border border-slate-800 shadow-xl flex flex-col justify-center text-center">
+            <div className="w-10 h-10 bg-blue-400/10 rounded-xl flex items-center justify-center text-blue-400 mx-auto mb-2"><Building2 className="w-5 h-5" /></div>
+            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Bank</p>
+            <h3 className="text-lg font-black text-blue-400">${balances.bank.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3>
+         </div>
+         <div className="bg-slate-900/50 backdrop-blur-md p-5 rounded-4xl border border-slate-800 shadow-xl flex flex-col justify-center text-center">
+            <div className="w-10 h-10 bg-indigo-400/10 rounded-xl flex items-center justify-center text-indigo-400 mx-auto mb-2"><CreditCard className="w-5 h-5" /></div>
+            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Card / POS</p>
+            <h3 className="text-lg font-black text-indigo-400">${balances.card.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3>
+         </div>
+         <div className="bg-slate-900/50 backdrop-blur-md p-5 rounded-4xl border border-slate-800 shadow-xl flex flex-col justify-center text-center">
+            <div className="w-10 h-10 bg-pink-400/10 rounded-xl flex items-center justify-center text-pink-400 mx-auto mb-2"><Wallet className="w-5 h-5" /></div>
+            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">bKash</p>
+            <h3 className="text-lg font-black text-pink-400">${balances.bkash.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3>
+         </div>
+         <div className="bg-slate-900/50 backdrop-blur-md p-5 rounded-4xl border border-slate-800 shadow-xl flex flex-col justify-center text-center">
+            <div className="w-10 h-10 bg-orange-400/10 rounded-xl flex items-center justify-center text-orange-400 mx-auto mb-2"><Wallet className="w-5 h-5" /></div>
+            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Nagad</p>
+            <h3 className="text-lg font-black text-orange-400">${balances.nagad.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3>
+         </div>
+         <div className="bg-slate-900/50 backdrop-blur-md p-5 rounded-4xl border border-slate-800 shadow-xl flex flex-col justify-center text-center">
+            <div className="w-10 h-10 bg-rose-400/10 rounded-xl flex items-center justify-center text-rose-400 mx-auto mb-2"><ArrowUpFromLine className="w-5 h-5" /></div>
+            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Cash Out</p>
+            <h3 className="text-lg font-black text-rose-400">${totalCashOut.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3>
+         </div>
       </div>
 
       <div className="bg-slate-900/50 backdrop-blur-md border border-slate-800 rounded-[2.5rem] p-8 shadow-2xl">
@@ -153,11 +169,10 @@ const CashManagement: React.FC<CashManagementProps> = ({
                   </td>
                   <td className="p-5">
                     <span className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest border ${
-                      t.type === 'BANK_DEPOSIT' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 
-                      t.type === 'BANK_WITHDRAWAL' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 
+                      t.type === 'TRANSFER' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 
                       'bg-rose-500/10 text-rose-400 border-rose-500/20'
                     }`}>
-                      {t.type.replace('_', ' ')}
+                      {t.type === 'TRANSFER' && t.destination ? `${t.source} TO ${t.destination}` : t.type.replace('_', ' ')}
                     </span>
                   </td>
                   <td className="p-5 text-slate-300 text-sm font-bold">{t.description}</td>
@@ -166,11 +181,6 @@ const CashManagement: React.FC<CashManagementProps> = ({
                   </td>
                 </tr>
               ))}
-              {storeTransactions.length === 0 && (
-                <tr>
-                  <td colSpan={4} className="p-10 text-center text-slate-500 text-xs font-bold uppercase tracking-widest opacity-50">No transactions recorded</td>
-                </tr>
-              )}
             </tbody>
           </table>
         </div>
@@ -178,7 +188,7 @@ const CashManagement: React.FC<CashManagementProps> = ({
 
       <AnimatePresence>
         {isModalOpen && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-100 flex items-center justify-center p-4">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setIsModalOpen(false)} className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm" />
             <motion.div initial={{ scale: 0.9, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.9, opacity: 0, y: 20 }} className="relative w-full max-w-lg bg-slate-900 border border-slate-800 rounded-[2.5rem] shadow-2xl p-8 overflow-hidden">
               <div className="flex items-center justify-between mb-8">
@@ -186,21 +196,32 @@ const CashManagement: React.FC<CashManagementProps> = ({
                 <button onClick={() => setIsModalOpen(false)} className="p-2 text-slate-500 hover:text-white"><X className="w-6 h-6" /></button>
               </div>
               <form onSubmit={handleSubmit} className="space-y-6">
+                
+                <div className="flex p-1 bg-slate-800 rounded-2xl mb-6 border border-slate-700">
+                  <button type="button" onClick={() => setType('TRANSFER')} className={`flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${type === 'TRANSFER' ? 'bg-slate-700 text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}>Internal Transfer</button>
+                  <button type="button" onClick={() => setType('CASH_OUT')} className={`flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${type === 'CASH_OUT' ? 'bg-rose-500 text-white shadow-sm' : 'text-slate-500 hover:text-rose-400'}`}>Cash Out</button>
+                </div>
+
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2">Transaction Type</label>
-                  <select value={type} onChange={(e: any) => setType(e.target.value)} className="w-full px-5 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-white font-bold focus:border-emerald-500 appearance-none">
-                    <option value="BANK_DEPOSIT">Bank Deposit (Cash to Bank)</option>
-                    <option value="BANK_WITHDRAWAL">Bank Withdrawal (Bank to Cash)</option>
-                    <option value="CASH_OUT">Cash Out (Owner Withdrawal)</option>
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2">Withdraw From</label>
+                  <select value={source} onChange={(e: any) => setSource(e.target.value)} className="w-full px-5 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-white font-bold focus:border-emerald-500 appearance-none">
+                    <option value="CASH">CASH (${balances.cash.toFixed(2)})</option>
+                    <option value="BANK">BANK (${balances.bank.toFixed(2)})</option>
+                    <option value="CARD">CARD (${balances.card.toFixed(2)})</option>
+                    <option value="BKASH">bKash (${balances.bkash.toFixed(2)})</option>
+                    <option value="NAGAD">NAGAD (${balances.nagad.toFixed(2)})</option>
                   </select>
                 </div>
 
-                {type === 'CASH_OUT' && (
+                {type === 'TRANSFER' && (
                   <div className="space-y-2 animate-in fade-in slide-in-from-top-2">
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2">Source Fund</label>
-                    <select value={source} onChange={(e: any) => setSource(e.target.value)} className="w-full px-5 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-white font-bold focus:border-rose-500 appearance-none">
-                      <option value="CASH">From Cash Drawer (Net Balance)</option>
-                      <option value="BANK">From Bank Account</option>
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2">Transfer To</label>
+                    <select value={destination} onChange={(e: any) => setDestination(e.target.value)} className="w-full px-5 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-white font-bold focus:border-emerald-500 appearance-none">
+                      <option value="CASH">CASH</option>
+                      <option value="BANK">BANK</option>
+                      <option value="CARD">CARD</option>
+                      <option value="BKASH">bKash</option>
+                      <option value="NAGAD">NAGAD</option>
                     </select>
                   </div>
                 )}
@@ -212,10 +233,10 @@ const CashManagement: React.FC<CashManagementProps> = ({
                 
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2">Note / Description</label>
-                  <input type="text" required value={description} onChange={(e) => setDescription(e.target.value)} placeholder="e.g., Deposited to Brac Bank" className="w-full px-5 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-white text-sm focus:border-emerald-500" />
+                  <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} placeholder={type === 'CASH_OUT' ? 'Owner Withdrawal' : 'Fund Transfer'} className="w-full px-5 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-white text-sm focus:border-emerald-500" />
                 </div>
 
-                <button type="submit" disabled={isLoading} className="w-full py-5 bg-gradient-to-r from-emerald-500 to-emerald-700 text-white rounded-[2rem] font-black shadow-2xl hover:scale-[1.02] transition-all uppercase tracking-widest text-xs disabled:opacity-50">
+                <button type="submit" disabled={isLoading} className={`w-full py-5 text-white rounded-[2rem] font-black shadow-2xl hover:scale-[1.02] transition-all uppercase tracking-widest text-xs disabled:opacity-50 ${type === 'CASH_OUT' ? 'bg-rose-500' : 'bg-gradient-to-r from-emerald-500 to-emerald-700'}`}>
                   {isLoading ? 'Processing...' : 'Confirm Transaction'}
                 </button>
               </form>
