@@ -15,10 +15,20 @@ const Users = lazy(() => import('./components/Users'));
 const Customers = lazy(() => import('./components/Customers'));
 const Suppliers = lazy(() => import('./components/Suppliers'));
 const Purchases = lazy(() => import('./components/Purchases'));
+const Returns = lazy(() => import('./components/Returns')); // 🔴 NEW RETURNS IMPORT
 const Wastage = lazy(() => import('./components/Wastage'));
 const Scanner = lazy(() => import('./components/Scanner'));
 const Settings = lazy(() => import('./components/Settings'));
 const CashManagement = lazy(() => import('./components/CashManagement'));
+
+// Helper: Generate UUID locally for Offline Mode and Supabase compatibility
+const generateUUID = () => {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    var r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+};
 
 const App: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => localStorage.getItem('omni_auth') === 'true');
@@ -271,10 +281,7 @@ const App: React.FC = () => {
 
   // 🔴 OFFLINE SUPPORTED CRUD OPERATIONS
   const addSale = useCallback(async (sale: Omit<Sale, 'id' | 'timestamp'>) => {
-    if (!sale.invoiceId?.startsWith('PAY-') && sale.productId !== 'PAYMENT_RECEIVED') {
-      const product = products.find(p => p.id === sale.productId);
-      if (!product || product.quantity < sale.quantity) { Swal.fire({ icon: 'error', title: 'Action Denied', text: 'Insufficient stock!', customClass: { popup: 'rounded-3xl' } }); throw new Error("Insufficient stock"); }
-    }
+    // Note: We bypass strict local stock check for negative sales (returns)
     const tempId = `temp-sale-${Date.now()}`;
     const tempSale = { ...sale, id: tempId, timestamp: new Date().toISOString(), storeId: currentStore?.id || '' } as Sale;
     setSales(prev => [tempSale, ...prev]);
@@ -288,7 +295,7 @@ const App: React.FC = () => {
     } else {
       addToQueue('sales', 'INSERT', { ...tempSale });
     }
-  }, [currentStore?.id, products, isOnline, addToQueue]);
+  }, [currentStore?.id, isOnline, addToQueue]);
 
   const addProduct = useCallback(async (newProduct: Omit<Product, 'id' | 'lastUpdated'>) => { 
     const tempId = `temp-prod-${Date.now()}`;
@@ -481,9 +488,13 @@ const App: React.FC = () => {
 
             <Route path="/inventory" element={<Inventory products={products} suppliers={suppliers} purchases={purchases} currentStore={currentStore} currentUser={currentUser} categories={categories} sales={sales} expenses={expenses} onUpdate={updateProduct} onDelete={deleteProduct} onAdd={addProduct} onAddSale={addSale} onAddExpense={addExpense} onUpdateExpense={updateExpense} onDeleteExpense={deleteExpense} onAddCategory={handleAddCategory} onRemoveCategory={handleRemoveCategory} onUpdateSupplierDue={updateSupplierDue} onAddPurchase={addPurchase} canEditPrices={checkPermission('inventory_edit')} canDelete={checkPermission('inventory_delete')} />} />
             <Route path="/sales" element={<Sales sales={sales} products={products} customers={customers} expenses={expenses} currentStore={currentStore} currentUser={currentUser} onAddSale={addSale} onUpdateSale={updateSale} onUpdateStock={updateProduct} onUpdateCustomerDue={updateCustomerDue} onDeleteSale={deleteSale} canDelete={checkPermission('sales_delete')} />} />
-            <Route path="/customers" element={<Customers customers={customers} currentStore={currentStore} onAddCustomer={addCustomer} onUpdateCustomer={updateCustomer} onDeleteCustomer={deleteCustomer} onAddSale={addSale} onUpdateCustomerDue={updateCustomerDue} canEdit={checkPermission('customers_edit')} canDelete={checkPermission('customers_delete')} />} />
-            <Route path="/suppliers" element={<Suppliers suppliers={suppliers} currentStore={currentStore} onAddSupplier={addSupplier} onUpdateSupplier={updateSupplier} onDeleteSupplier={deleteSupplier} onAddExpense={addExpense} onUpdateSupplierDue={updateSupplierDue} canEdit={checkPermission('suppliers_edit')} canDelete={checkPermission('suppliers_delete')} />} />
+            
+            {/* 🔴 NEW RETURNS ROUTE */}
+            <Route path="/returns" element={<Returns products={products} customers={customers} suppliers={suppliers} currentStore={currentStore} onAddSale={addSale} onAddPurchase={addPurchase} onUpdateStock={updateProduct} onUpdateCustomerDue={updateCustomerDue} onUpdateSupplierDue={updateSupplierDue} />} />
+
             <Route path="/purchases" element={<Purchases purchases={purchases} suppliers={suppliers} products={products} currentStore={currentStore} onAddPurchase={addPurchase} onUpdateStock={updateProduct} onUpdateSupplierDue={updateSupplierDue} onDeletePurchase={deletePurchase} onAddExpense={addExpense} canDelete={checkPermission('purchase_delete')} />} />
+            <Route path="/customers" element={<Customers customers={customers} sales={sales} currentStore={currentStore} onAddCustomer={addCustomer} onUpdateCustomer={updateCustomer} onDeleteCustomer={deleteCustomer} onAddSale={addSale} onUpdateCustomerDue={updateCustomerDue} canEdit={checkPermission('customers_edit')} canDelete={checkPermission('customers_delete')} />} />
+           <Route path="/suppliers" element={<Suppliers suppliers={suppliers} currentStore={currentStore} onAddSupplier={addSupplier} onUpdateSupplier={updateSupplier} onDeleteSupplier={deleteSupplier} onAddExpense={addExpense} onUpdateSupplierDue={updateSupplierDue} canEdit={checkPermission('suppliers_edit')} canDelete={checkPermission('suppliers_delete')} />} />
             <Route path="/expenses" element={currentUser.role !== UserRole.SALESMAN ? <Expenses expenses={expenses} currentStore={currentStore} currentUser={currentUser} expenseCategories={expenseCategories} onAddExpense={addExpense} onUpdateExpense={updateExpense} onDeleteExpense={deleteExpense} onAddExpenseCategory={handleAddExpenseCategory} onRemoveExpenseCategory={handleRemoveExpenseCategory} canEdit={checkPermission('expenses_edit')} canDelete={checkPermission('expenses_delete')} /> : <Navigate to="/inventory" replace />} />
             <Route path="/wastage" element={currentUser.role !== UserRole.SALESMAN ? <Wastage products={products} currentStore={currentStore} expenses={expenses} onUpdateStock={updateProduct} onAddExpense={addExpense} onDeleteExpense={deleteExpense} canDelete={checkPermission('expenses_delete')} /> : <Navigate to="/inventory" replace />} />
             <Route path="/scanner" element={<Scanner products={products} currentStore={currentStore} onUpdate={updateProduct} onAddSale={addSale} />} />

@@ -47,7 +47,6 @@ const Sales: React.FC<SalesProps> = ({
   const [currentPage, setCurrentPage] = useState(1);
   const ITEMS_PER_PAGE = 20; 
 
-  // 🔴 Scanner & Big Search States
   const [isScanning, setIsScanning] = useState(false);
   const [scannerError, setScannerError] = useState<string | null>(null);
   const scannerRef = useRef<any>(null);
@@ -56,9 +55,12 @@ const Sales: React.FC<SalesProps> = ({
   const [productSearchTerm, setProductSearchTerm] = useState('');
   const [productSearchResults, setProductSearchResults] = useState<Product[]>([]);
 
-  // 🔴 Cart & Checkout States
+  // Cart & Checkout States
   const [cart, setCart] = useState<CartItem[]>([]);
   const [customerId, setCustomerId] = useState('');
+  const [customerSearchTerm, setCustomerSearchTerm] = useState('');
+  const [isCustomerDropdownOpen, setIsCustomerDropdownOpen] = useState(false);
+
   const [discount, setDiscount] = useState(0);
   const [amountPaid, setAmountPaid] = useState<string>(''); 
   const [paymentMethod, setPaymentMethod] = useState<string>('Cash'); 
@@ -82,7 +84,7 @@ const Sales: React.FC<SalesProps> = ({
 
   useEffect(() => setCurrentPage(1), [searchTerm, filterDate]);
 
-  // 🔴 BIG SEARCH DROPDOWN LOGIC
+  // Product Search Logic
   useEffect(() => {
     if (productSearchTerm.trim() === '') {
       setProductSearchResults([]);
@@ -91,10 +93,25 @@ const Sales: React.FC<SalesProps> = ({
     const lowerTerm = productSearchTerm.toLowerCase();
     const results = products.filter(p => 
       p.storeId === currentStore.id && 
-      (p.sku.toLowerCase().includes(lowerTerm) || p.name.toLowerCase().includes(lowerTerm))
+      (
+        p.sku.toLowerCase().includes(lowerTerm) || 
+        p.name.toLowerCase().includes(lowerTerm)
+      )
     );
     setProductSearchResults(results);
   }, [productSearchTerm, products, currentStore.id]);
+
+  // Customer Phone/Name Search Logic
+  const filteredCustomers = useMemo(() => {
+    const lowerTerm = customerSearchTerm.toLowerCase();
+    return customers.filter(c => 
+      c.storeId === currentStore.id && 
+      (
+        c.name.toLowerCase().includes(lowerTerm) || 
+        (c.phone && c.phone.includes(lowerTerm))
+      )
+    );
+  }, [customers, currentStore.id, customerSearchTerm]);
 
   const safeStopScanner = async () => {
     if (scannerRef.current) {
@@ -135,7 +152,6 @@ const Sales: React.FC<SalesProps> = ({
     }, 350);
   };
 
-  // 🔴 ADD TO CART LOGIC
   const processAddToCart = (product: Product) => {
     if (product.quantity <= 0) {
         alert(`Out of Stock: ${product.name}`);
@@ -149,9 +165,14 @@ const Sales: React.FC<SalesProps> = ({
        }
        setCart(cart.map(c => c.product.id === product.id ? {...c, quantity: c.quantity + 1} : c));
     } else {
-       setCart([...cart, { cartId: Math.random().toString(), product, quantity: 1, unitPrice: product.price }]);
+       setCart([...cart, { 
+           cartId: Math.random().toString(), 
+           product, 
+           quantity: 1, 
+           unitPrice: product.price 
+       }]);
     }
-    setProductSearchTerm(''); // Clear search box after add
+    setProductSearchTerm(''); 
     if(searchInputRef.current) searchInputRef.current.focus();
   };
 
@@ -182,14 +203,12 @@ const Sales: React.FC<SalesProps> = ({
     setCart(cart.filter(c => c.cartId !== cartId));
   };
 
-  // 🔴 Cart Calculations
   const cartSubtotal = cart.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0);
   const cartTotalAfterDiscount = cartSubtotal * (1 - (discount / 100));
   const isWalkIn = !customerId;
   const finalAmountPaid = isWalkIn ? cartTotalAfterDiscount : (parseFloat(amountPaid) || 0);
   const cartDue = Math.max(0, cartTotalAfterDiscount - finalAmountPaid);
 
-  // 🔴 Final Checkout Processing
   const handleConfirmSale = () => {
     if (cart.length === 0) return alert('Cart is empty. Please add items to sell.');
     if (finalAmountPaid < cartTotalAfterDiscount && isWalkIn) {
@@ -201,7 +220,7 @@ const Sales: React.FC<SalesProps> = ({
 
     for (const item of cart) {
         if (item.quantity > item.product.quantity) {
-            return alert(`Not enough stock for ${item.product.name}. Available: ${item.product.quantity}`);
+            return alert(`Not enough stock for ${item.product.name}. Available: ${item.product.quantity} Units.`);
         }
     }
 
@@ -216,12 +235,12 @@ const Sales: React.FC<SalesProps> = ({
        onAddSale({
           invoiceId,
           customerId: isWalkIn ? (null as unknown as string) : customerId,
-          customerName: isWalkIn ? 'Cash Sale (Walk-in)' : (customers.find(c => c.id === customerId)?.name || 'Walk-in'),
+          customerName: isWalkIn ? 'Cash Sale (Walk-in)' : (customers.find(c => c.id === customerId)?.name || 'Walk-in Customer'),
           productId: item.product.id,
           productName: item.product.name,
-          quantity: item.quantity,
+          quantity: item.quantity, 
           buyingPrice: item.product.buyingPrice,
-          unitPrice: item.unitPrice,
+          unitPrice: item.unitPrice, 
           discount: discount,
           totalPrice: itemTotal,
           amountPaid: itemPaid,
@@ -242,6 +261,7 @@ const Sales: React.FC<SalesProps> = ({
     
     setCart([]);
     setCustomerId('');
+    setCustomerSearchTerm('');
     setDiscount(0);
     setAmountPaid('');
     setPaymentMethod('Cash');
@@ -395,8 +415,12 @@ const Sales: React.FC<SalesProps> = ({
   if (!isSessionActive) {
     const historicalSales = sales
       .filter(s => s.storeId === currentStore.id)
-      .filter(s => (s.customerName.toLowerCase().includes(searchTerm.toLowerCase()) || s.invoiceId.toLowerCase().includes(searchTerm.toLowerCase()) || s.productName.toLowerCase().includes(searchTerm.toLowerCase())) && (!filterDate || s.timestamp.startsWith(filterDate)))
-      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()); 
+      .filter(s => (
+        (s.customerName || '').toLowerCase().includes(searchTerm.toLowerCase()) || 
+        (s.invoiceId || '').toLowerCase().includes(searchTerm.toLowerCase()) || 
+        (s.productName || '').toLowerCase().includes(searchTerm.toLowerCase())
+      ) && (!filterDate || s.timestamp?.startsWith(filterDate)))
+      .sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime()); 
 
     const totalPages = Math.ceil(historicalSales.length / ITEMS_PER_PAGE);
     const paginatedSales = historicalSales.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
@@ -405,13 +429,13 @@ const Sales: React.FC<SalesProps> = ({
       <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-700">
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
           <div>
-            <h1 className="text-3xl font-black text-white tracking-tight">Sales Operations</h1>
-            <p className="text-slate-500 font-medium italic">General ledger for <span className="gold-gradient-text font-black">{currentStore.name}</span></p>
+            <h1 className="text-3xl font-black text-white tracking-tight">Point of Sale</h1>
+            <p className="text-slate-500 font-medium italic">Sales & checkout terminal for <span className="gold-gradient-text font-black">{currentStore.name}</span></p>
           </div>
           <div className="flex items-center gap-3">
             <button onClick={exportToCSV} className="p-4 bg-slate-900 border border-slate-800 text-slate-400 rounded-2xl hover:text-white transition-all shadow-xl"><Download className="w-5 h-5" /></button>
             <button onClick={() => setIsSessionActive(true)} className="bg-gradient-to-r from-amber-400 to-amber-600 text-slate-950 px-6 py-4 rounded-2xl font-black flex items-center gap-3 hover:scale-[1.02] transition-all shadow-xl shadow-amber-900/10 uppercase tracking-widest text-xs">
-              <ShoppingCart className="w-5 h-5 stroke-[3px]" /> Record New Sale
+              <ShoppingCart className="w-5 h-5 stroke-[3px]" /> Open Terminal
             </button>
           </div>
         </div>
@@ -460,7 +484,7 @@ const Sales: React.FC<SalesProps> = ({
             <div className="flex flex-col lg:flex-row gap-4">
               <div className="flex-1 relative group">
                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-amber-400 transition-colors" />
-                <input type="text" placeholder="Query invoice, customer or item..." className="w-full pl-12 pr-4 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 focus:border-amber-400 transition-all amber-glow" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+                <input type="text" placeholder="Search invoice, product or customer..." className="w-full pl-12 pr-4 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-slate-100 focus:border-amber-400 transition-all amber-glow" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
               </div>
               <div className="relative flex items-center gap-2 bg-slate-800 border border-slate-700 rounded-2xl px-4 focus-within:border-amber-400 transition-colors">
                 <input type="date" className="bg-transparent py-4 outline-none text-xs font-bold text-slate-300 w-full" value={filterDate} onChange={e => setFilterDate(e.target.value)} />
@@ -474,9 +498,8 @@ const Sales: React.FC<SalesProps> = ({
               <thead>
                 <tr className="text-[10px] font-black text-slate-500 uppercase tracking-widest border-b border-slate-800 bg-slate-900/80">
                   <th className="px-6 py-5">Date</th>
-                  <th className="px-6 py-5">Invoice</th>
-                  <th className="px-6 py-5">Customer</th>
-                  <th className="px-6 py-5">Item</th>
+                  <th className="px-6 py-5">Invoice & Customer</th>
+                  <th className="px-6 py-5">Product Issued</th>
                   <th className="px-6 py-5 text-center">Qty</th>
                   <th className="px-6 py-5 text-right">Settlement</th>
                   <th className="px-6 py-5 text-right">Actions</th>
@@ -490,14 +513,16 @@ const Sales: React.FC<SalesProps> = ({
 
                   return (
                     <tr key={saleRecord.id} className={`group hover:bg-slate-800/40 transition-all ${isVoid ? 'opacity-50 grayscale' : ''} ${isReturn ? 'bg-orange-500/5 hover:bg-orange-500/10' : ''}`}>
-                      <td className="px-6 py-5 font-bold text-slate-400 text-xs whitespace-nowrap">{new Date(saleRecord.timestamp).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
-                      <td className="px-6 py-5 font-black text-xs tracking-tighter">
-                        {isVoid ? <span className="text-rose-500 line-through">{saleRecord.invoiceId}</span> : 
-                         isReturn ? <span className="text-orange-400">{saleRecord.invoiceId}</span> : 
-                         <span className="text-white">{saleRecord.invoiceId}</span>}
+                      <td className="px-6 py-5 font-bold text-slate-400 text-xs whitespace-nowrap">{new Date(saleRecord.timestamp || '').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+                      <td className="px-6 py-5">
+                        <div className="font-black text-xs tracking-tighter mb-1">
+                          {isVoid ? <span className="text-rose-500 line-through">{saleRecord.invoiceId}</span> : 
+                           isReturn ? <span className="text-orange-400">{saleRecord.invoiceId}</span> : 
+                           <span className="text-white">{saleRecord.invoiceId}</span>}
+                        </div>
+                        <p className="text-xs text-slate-400 font-bold">{saleRecord.customerName}</p>
                       </td>
-                      <td className="px-6 py-5 text-sm font-bold text-slate-300">{saleRecord.customerName}</td>
-                      <td className="px-6 py-5 text-sm text-slate-400 flex flex-col">
+                      <td className="px-6 py-5 text-sm text-slate-300 flex flex-col">
                         {isPayment ? <span className="text-blue-400 italic font-bold">Due Collection</span> : isReturn ? <span className="text-orange-400 italic font-bold">{saleRecord.productName}</span> : saleRecord.productName}
                         {saleRecord.paymentMethod && <span className="text-[9px] uppercase tracking-widest text-emerald-400 font-black mt-1">[{saleRecord.paymentMethod}]</span>}
                       </td>
@@ -528,7 +553,7 @@ const Sales: React.FC<SalesProps> = ({
                     </tr>
                   );
                 })}
-                {paginatedSales.length === 0 && <tr><td colSpan={7} className="px-6 py-20 text-center text-slate-500 text-xs font-bold uppercase tracking-widest opacity-50">No sales records found</td></tr>}
+                {paginatedSales.length === 0 && <tr><td colSpan={6} className="px-6 py-20 text-center text-slate-500 text-xs font-bold uppercase tracking-widest opacity-50">No sales records found</td></tr>}
               </tbody>
             </table>
           </div>
@@ -550,19 +575,19 @@ const Sales: React.FC<SalesProps> = ({
             <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
               <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="bg-slate-900 w-full max-w-md rounded-[2.5rem] border border-slate-800 shadow-2xl p-8 relative">
                  <button onClick={() => setIsReturnModalOpen(false)} className="absolute top-6 right-6 text-slate-500 hover:text-white"><X className="w-6 h-6" /></button>
-                 <h2 className="text-xl font-black text-white mb-2 flex items-center gap-2"><RotateCcw className="w-5 h-5 text-orange-500"/> Return Item</h2>
+                 <h2 className="text-xl font-black text-white mb-2 flex items-center gap-2"><RotateCcw className="w-5 h-5 text-orange-500"/> Return Product</h2>
                  <p className="text-xs text-slate-400 font-bold mb-6">Original Invoice: {saleToReturn.invoiceId}</p>
 
                  <form onSubmit={handleReturnSubmit} className="space-y-6">
                      <div className="bg-slate-800/50 p-4 rounded-2xl border border-slate-700/50 mb-6">
                          <p className="text-sm font-bold text-white mb-1">{saleToReturn.productName}</p>
-                         <p className="text-xs text-slate-400">Unit Settlement: ${(saleToReturn.totalPrice / saleToReturn.quantity).toFixed(2)} / item</p>
+                         <p className="text-xs text-slate-400">Unit Settlement: ${(saleToReturn.totalPrice / saleToReturn.quantity).toFixed(2)} / unit</p>
                      </div>
 
                      <div className="space-y-2">
                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2">Return Quantity</label>
                          <input type="number" min="1" max={getReturnableQty(saleToReturn)} value={returnQty} onWheel={(e) => (e.target as HTMLInputElement).blur()} onFocus={e => e.target.select()} onChange={e => setReturnQty(parseInt(e.target.value) || 1)} className="w-full px-5 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-orange-400 font-black focus:border-orange-500" />
-                         <p className="text-[10px] text-orange-500/80 font-bold text-right mr-2 mt-1">Max returnable: {getReturnableQty(saleToReturn)}</p>
+                         <p className="text-[10px] text-orange-500/80 font-bold text-right mr-2 mt-1">Max returnable: {getReturnableQty(saleToReturn)} units</p>
                      </div>
 
                      <div className="bg-orange-500/10 border border-orange-500/20 p-4 rounded-2xl">
@@ -575,7 +600,7 @@ const Sales: React.FC<SalesProps> = ({
                          </div>
                      </div>
 
-                     <button type="submit" className="w-full bg-orange-500 text-white py-4 rounded-2xl font-black uppercase tracking-widest text-xs shadow-lg hover:bg-orange-600 transition-colors">Confirm Return</button>
+                     <button type="submit" className="w-full bg-orange-500 text-white py-4 rounded-2xl font-black uppercase tracking-widest text-xs shadow-lg hover:bg-orange-600 transition-colors">Confirm Refund</button>
                  </form>
               </motion.div>
             </div>
@@ -609,11 +634,11 @@ const Sales: React.FC<SalesProps> = ({
 
                   <div className="grid grid-cols-2 gap-12 mb-12">
                     <div>
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Billed To</p>
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Customer Details</p>
                       <p className="font-black text-lg">{sales.find(s => s.invoiceId === selectedInvoiceForPrint)?.customerName || 'Walk-in Customer'}</p>
                     </div>
                     <div className="text-right">
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Date Issued</p>
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Date</p>
                       <p className="font-black text-lg">{new Date(sales.find(s => s.invoiceId === selectedInvoiceForPrint)?.timestamp || '').toLocaleDateString()}</p>
                     </div>
                   </div>
@@ -621,7 +646,7 @@ const Sales: React.FC<SalesProps> = ({
                   <table className="w-full mb-12">
                     <thead>
                       <tr className="border-b-2 border-slate-950 text-[10px] font-black uppercase tracking-widest">
-                        <th className="py-4 text-left">Description</th><th className="py-4 text-center">Qty</th><th className="py-4 text-right">Unit</th><th className="py-4 text-right">Total</th>
+                        <th className="py-4 text-left">Description</th><th className="py-4 text-center">Qty</th><th className="py-4 text-right">Unit Price</th><th className="py-4 text-right">Total</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -645,7 +670,7 @@ const Sales: React.FC<SalesProps> = ({
                   </div>
 
                   <div className="mt-20 pt-12 border-t border-slate-100 text-center">
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em]">Thank you for your business</p>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em]">Thank you for shopping with us. Visit again!</p>
                   </div>
                 </div>
               </motion.div>
@@ -664,15 +689,10 @@ const Sales: React.FC<SalesProps> = ({
     );
   }
 
-  // ==============================================================
-  // 🔴 LIVE POS LAYOUT (LOCAL CART WITH BIG SEARCH)
-  // ==============================================================
   return (
     <div className="h-[calc(100vh-140px)] flex flex-col lg:flex-row gap-8 animate-in fade-in zoom-in-95 duration-500 overflow-hidden">
       
-      {/* =====================================
-          LEFT COLUMN: SEARCH & SCANNER
-      ===================================== */}
+      {/* LEFT COLUMN: SEARCH & SCANNER */}
       <div className="lg:w-[400px] flex flex-col bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl p-8 overflow-y-auto custom-scrollbar relative">
         <div className="mb-6 flex items-center justify-between">
           <div>
@@ -690,8 +710,6 @@ const Sales: React.FC<SalesProps> = ({
 
         <div className="space-y-6">
           <div className="space-y-2">
-            
-            {/* 🔴 NEW BIG SEARCH DROPDOWN UI */}
             <div className="relative z-[100] group">
               <div className="absolute inset-y-0 left-0 pl-5 flex items-center pointer-events-none">
                  <Keyboard className="w-5 h-5 text-slate-500 group-focus-within:text-amber-400 transition-colors" />
@@ -703,39 +721,39 @@ const Sales: React.FC<SalesProps> = ({
                 autoFocus 
                 onChange={e => setProductSearchTerm(e.target.value)} 
                 onKeyDown={handleProductSearchKeyDown} 
-                placeholder="প্রোডাক্টের নাম বা SKU লিখুন..." 
-                className="w-full bg-slate-900 border-2 border-slate-800 text-white rounded-[2rem] py-5 pl-14 pr-16 focus:outline-none transition-all shadow-lg text-lg font-bold focus:border-amber-400 amber-glow" 
+                placeholder="Product Name or SKU..." 
+                className="w-full bg-slate-800 border-2 border-slate-700 text-white rounded-[2rem] py-5 pl-14 pr-16 focus:outline-none transition-all shadow-lg text-lg font-bold focus:border-amber-400 amber-glow" 
               />
               {!isScanning && (
-                <button type="button" onClick={startScanner} className="absolute right-4 top-1/2 -translate-y-1/2 p-3 bg-slate-800 rounded-xl text-slate-400 hover:text-amber-400 transition-all">
+                <button type="button" onClick={startScanner} className="absolute right-4 top-1/2 -translate-y-1/2 p-3 bg-slate-900 rounded-xl text-slate-400 hover:text-amber-400 transition-all">
                   <ScanLine className="w-5 h-5" />
                 </button>
               )}
 
-              {/* Product Results Dropdown */}
               {productSearchResults.length > 0 && (
                 <div className="absolute w-full mt-2 bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl max-h-60 overflow-y-auto custom-scrollbar">
                   {productSearchResults.map(product => (
                      <button
                         key={product.id}
                         type="button"
-                        className="w-full text-left px-5 py-4 hover:bg-slate-700 border-b border-slate-700/50 flex justify-between items-center transition-colors hover:border-l-4 hover:border-l-amber-400"
+                        className="w-full text-left px-5 py-4 hover:bg-slate-700 border-b border-slate-700/50 flex flex-col transition-colors hover:border-l-4 hover:border-l-amber-400"
                         onClick={() => processAddToCart(product)}
                      >
-                        <div>
-                           <p className="text-white font-bold text-sm">{product.name}</p>
-                           <p className="text-[10px] text-slate-400 font-mono tracking-wider">SKU: {product.sku}</p>
-                        </div>
-                        <div className="text-right">
-                           <p className="font-bold text-sm text-amber-400">৳{product.price}</p>
-                           <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Stock: {product.quantity}</p>
+                        <div className="flex justify-between items-start w-full">
+                           <div>
+                              <p className="text-white font-bold text-sm">{product.name}</p>
+                              <p className="text-[10px] text-slate-400 font-mono tracking-wider">SKU: {product.sku}</p>
+                           </div>
+                           <div className="text-right">
+                              <p className="font-bold text-sm text-amber-400">৳{product.price}</p>
+                              <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Stock: {product.quantity}</p>
+                           </div>
                         </div>
                      </button>
                   ))}
                 </div>
               )}
             </div>
-
           </div>
 
           {isScanning && (
@@ -762,12 +780,9 @@ const Sales: React.FC<SalesProps> = ({
         </div>
       </div>
 
-      {/* =====================================
-          RIGHT COLUMN: CART & CHECKOUT
-      ===================================== */}
+      {/* RIGHT COLUMN: CART & CHECKOUT */}
       <div className="flex-1 flex flex-col bg-slate-900/50 backdrop-blur-md border border-slate-800 rounded-[2.5rem] shadow-2xl overflow-hidden">
         
-        {/* Cart Header */}
         <div className="p-6 border-b border-slate-800 flex items-center justify-between">
            <div>
              <h2 className="text-xl font-black text-white tracking-tight uppercase flex items-center gap-3">
@@ -778,15 +793,14 @@ const Sales: React.FC<SalesProps> = ({
            </div>
         </div>
 
-        {/* Cart Items Table */}
         <div className="flex-1 overflow-y-auto custom-scrollbar bg-slate-900/30">
            <table className="w-full text-left">
               <thead className="sticky top-0 bg-slate-900 z-10">
                 <tr className="text-[10px] font-black text-slate-500 uppercase tracking-widest border-b border-slate-800">
-                  <th className="px-6 py-4">Item Details</th>
-                  <th className="px-6 py-4 text-center">Vol (Qty)</th>
-                  <th className="px-6 py-4 text-right">Unit Price</th>
-                  <th className="px-6 py-4 text-right">Total</th>
+                  <th className="px-6 py-4">Product Details</th>
+                  <th className="px-4 py-4 text-center">Qty</th>
+                  <th className="px-4 py-4 text-right">Unit Price</th>
+                  <th className="px-4 py-4 text-right">Total</th>
                   <th className="px-6 py-4 text-center"></th>
                 </tr>
               </thead>
@@ -794,22 +808,21 @@ const Sales: React.FC<SalesProps> = ({
                 {cart.map((cartItem) => (
                     <tr key={cartItem.cartId} className="group hover:bg-slate-800/40 transition-all animate-in slide-in-from-right-4 duration-300">
                       <td className="px-6 py-4">
-                         <p className="font-bold text-white text-sm truncate max-w-xs">{cartItem.product.name}</p>
+                         <p className="font-bold text-white text-sm truncate max-w-[200px]">{cartItem.product.name}</p>
                          <p className="text-[10px] text-slate-500 font-bold uppercase tracking-tighter italic">Stock: {cartItem.product.quantity}</p>
                       </td>
-                      <td className="px-6 py-4 text-center">
+                      <td className="px-4 py-4 text-center">
                          <input 
                            type="number" 
                            min="1" 
-                           max={cartItem.product.quantity}
                            value={cartItem.quantity} 
                            onWheel={(e) => (e.target as HTMLInputElement).blur()} 
                            onFocus={e => e.target.select()} 
                            onChange={(e) => handleCartQtyChange(cartItem.cartId, parseInt(e.target.value))} 
-                           className="w-20 bg-slate-800 border border-slate-700 rounded-xl text-center font-black text-amber-400 text-sm focus:border-amber-400 outline-none p-1.5 shadow-inner" 
+                           className="w-16 bg-slate-800 border border-slate-700 rounded-xl text-center font-black text-amber-400 text-sm focus:border-amber-400 outline-none p-1.5 shadow-inner" 
                          />
                       </td>
-                      <td className="px-6 py-4 text-right">
+                      <td className="px-4 py-4 text-right">
                          <input 
                            type="number" 
                            step="0.01" 
@@ -817,13 +830,12 @@ const Sales: React.FC<SalesProps> = ({
                            onWheel={(e) => (e.target as HTMLInputElement).blur()} 
                            onFocus={e => e.target.select()} 
                            onChange={(e) => handleCartPriceChange(cartItem.cartId, parseFloat(e.target.value))} 
-                           className="w-24 bg-slate-800 border border-slate-700 rounded-xl text-right font-black text-emerald-400 text-sm focus:border-emerald-400 outline-none p-1.5 shadow-inner" 
+                           className="w-20 bg-slate-800 border border-slate-700 rounded-xl text-right font-black text-emerald-400 text-sm focus:border-emerald-400 outline-none p-1.5 shadow-inner" 
                          />
                       </td>
-                      <td className="px-6 py-4 text-right font-black text-white">
+                      <td className="px-4 py-4 text-right font-black text-white">
                          ${(cartItem.quantity * cartItem.unitPrice).toFixed(2)}
                       </td>
-                      {/* 🔴 Local Delete Action Button */}
                       <td className="px-6 py-4 text-center">
                          <button 
                            type="button"
@@ -840,7 +852,7 @@ const Sales: React.FC<SalesProps> = ({
                   <tr>
                     <td colSpan={5} className="px-6 py-20 text-center opacity-30 grayscale">
                       <ShoppingCart className="w-12 h-12 mx-auto text-slate-600 mb-4" />
-                      <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Cart is empty. Scan or search items.</p>
+                      <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Cart is empty. Search items to begin.</p>
                     </td>
                   </tr>
                 )}
@@ -848,24 +860,68 @@ const Sales: React.FC<SalesProps> = ({
            </table>
         </div>
         
-        {/* 🔴 CHECKOUT PANEL */}
         <div className="p-6 bg-slate-950 border-t border-slate-800 grid grid-cols-1 md:grid-cols-12 gap-6">
-           {/* Left Settings */}
-           <div className="md:col-span-7 space-y-4">
+           <div className="md:col-span-8 space-y-4">
               <div className="flex gap-4">
-                 <div className="flex-1">
+                 
+                 <div className="flex-1 relative">
                    <label className="text-[10px] text-slate-500 uppercase tracking-widest block mb-1">Customer Profile</label>
-                   <select 
-                     className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-white text-sm font-bold outline-none focus:border-amber-400"
-                     value={customerId} 
-                     onChange={e => setCustomerId(e.target.value)}
-                   >
-                     <option value="">Cash Sale (Walk-in)</option>
-                     {customers.filter(c => c.storeId === currentStore.id).map(c => (
-                       <option key={c.id} value={c.id}>{c.name} ({c.phone})</option>
-                     ))}
-                   </select>
+                   <div className="relative">
+                     <input
+                        type="text"
+                        value={customerSearchTerm}
+                        onChange={e => {
+                          setCustomerSearchTerm(e.target.value);
+                          setIsCustomerDropdownOpen(true);
+                          if (e.target.value === '') setCustomerId(''); 
+                        }}
+                        onFocus={() => setIsCustomerDropdownOpen(true)}
+                        onBlur={() => setTimeout(() => setIsCustomerDropdownOpen(false), 200)}
+                        placeholder="Search name or phone..."
+                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-white text-sm font-bold outline-none focus:border-amber-400"
+                     />
+                     
+                     <AnimatePresence>
+                       {isCustomerDropdownOpen && (
+                         <motion.div 
+                           initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }}
+                           className="absolute bottom-[calc(100%+8px)] left-0 w-full bg-slate-800 border border-slate-700 rounded-xl shadow-2xl max-h-48 overflow-y-auto z-50 custom-scrollbar"
+                         >
+                           <button
+                             type="button"
+                             onClick={() => {
+                               setCustomerId('');
+                               setCustomerSearchTerm('');
+                               setIsCustomerDropdownOpen(false);
+                             }}
+                             className="w-full text-left px-4 py-3 hover:bg-slate-700 text-sm font-bold text-slate-400 border-b border-slate-700/50"
+                           >
+                             Walk-in Customer (Cash)
+                           </button>
+                           {filteredCustomers.map(c => (
+                             <button
+                               key={c.id}
+                               type="button"
+                               onClick={() => {
+                                 setCustomerId(c.id);
+                                 setCustomerSearchTerm(`${c.name} (${c.phone || 'N/A'})`);
+                                 setIsCustomerDropdownOpen(false);
+                               }}
+                               className="w-full text-left px-4 py-3 hover:bg-slate-700 text-sm font-bold text-white transition-colors border-b border-slate-700/50 flex justify-between"
+                             >
+                               <span>{c.name}</span>
+                               <span className="text-amber-400 text-xs">{c.phone}</span>
+                             </button>
+                           ))}
+                           {filteredCustomers.length === 0 && customerSearchTerm !== '' && (
+                             <div className="px-4 py-3 text-xs text-slate-500 italic">No customer found</div>
+                           )}
+                         </motion.div>
+                       )}
+                     </AnimatePresence>
+                   </div>
                  </div>
+
                  <div className="w-24">
                    <label className="text-[10px] text-slate-500 uppercase tracking-widest block mb-1">Discount %</label>
                    <input 
@@ -877,6 +933,7 @@ const Sales: React.FC<SalesProps> = ({
                    />
                  </div>
               </div>
+              
               <div className="flex gap-4">
                  <div className="flex-1">
                    <label className="text-[10px] text-slate-500 uppercase tracking-widest block mb-1">Payment Method</label>
@@ -906,8 +963,7 @@ const Sales: React.FC<SalesProps> = ({
               </div>
            </div>
            
-           {/* Right Summary */}
-           <div className="md:col-span-5 flex flex-col justify-end space-y-3 text-right bg-slate-900/50 p-4 rounded-2xl border border-slate-800">
+           <div className="md:col-span-4 flex flex-col justify-end space-y-3 text-right bg-slate-900/50 p-4 rounded-2xl border border-slate-800">
               <div className="flex justify-between text-slate-400 text-sm">
                 <span className="uppercase tracking-widest text-[10px] font-bold">Subtotal:</span> 
                 <span className="font-bold">${cartSubtotal.toFixed(2)}</span>
@@ -933,7 +989,12 @@ const Sales: React.FC<SalesProps> = ({
 
         <div className="p-4 bg-slate-900 flex justify-end gap-4 border-t border-slate-800">
            <button 
-             onClick={() => { setCart([]); setIsSessionActive(false); }} 
+             onClick={() => { 
+                setCart([]); 
+                setCustomerSearchTerm('');
+                setCustomerId('');
+                setIsSessionActive(false); 
+             }} 
              className="px-6 py-4 bg-slate-800 border border-slate-700 text-slate-400 rounded-xl font-bold hover:text-white hover:bg-slate-700 transition-colors text-[10px] uppercase tracking-widest"
            >
              Close Session

@@ -23,7 +23,7 @@ import {
   Truck,
   AlertTriangle,
   Trash2,
-  History
+  RefreshCcw
 } from 'lucide-react';
 import { User, Store, UserRole, Product, UserPermissions } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -62,12 +62,13 @@ const Layout: React.FC<LayoutProps> = ({
     return products.filter(p => p.storeId === currentStore.id && p.quantity <= p.minThreshold);
   }, [products, currentStore.id]);
 
-  // 🔴 Store Owner Role Added to navItems 🔴
+  // 🔴 Returns menu added after Purchases
   const navItems = [
     { name: 'Analytics', path: '/', icon: LayoutDashboard, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER, 'STORE_OWNER' as UserRole] },
     { name: 'Inventory', path: '/inventory', icon: Package, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER, 'STORE_OWNER' as UserRole, UserRole.SALESMAN] },
     { name: 'Sales', path: '/sales', icon: ShoppingCart, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER, 'STORE_OWNER' as UserRole, UserRole.SALESMAN] },
     { name: 'Purchases', path: '/purchases', icon: ShoppingBag, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER, 'STORE_OWNER' as UserRole] },
+    { name: 'Returns', path: '/returns', icon: RefreshCcw, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER, 'STORE_OWNER' as UserRole, UserRole.SALESMAN] },
     { name: 'Customers', path: '/customers', icon: Users, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER, 'STORE_OWNER' as UserRole, UserRole.SALESMAN] },
     { name: 'Suppliers', path: '/suppliers', icon: Truck, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER, 'STORE_OWNER' as UserRole] },
     { name: 'Log Expense', path: '/expenses', icon: Wallet, roles: [UserRole.SUPER_ADMIN, UserRole.MANAGER, 'STORE_OWNER' as UserRole] },
@@ -101,7 +102,6 @@ const Layout: React.FC<LayoutProps> = ({
       `}>
         <div className="h-full flex flex-col p-6">
           <div className="flex items-center justify-between mb-10">
-            {/* এখানে আপনার সম্পূর্ণ লোগোটি বসানো হয়েছে */}
             <Link to="/" onClick={closeSidebar} className="flex items-center justify-start group cursor-pointer">
               <img 
                 src="/full-logo.png" 
@@ -114,7 +114,7 @@ const Layout: React.FC<LayoutProps> = ({
             </button>
           </div>
 
-          <nav className="flex-1 space-y-2">
+          <nav className="flex-1 space-y-2 overflow-y-auto custom-scrollbar">
             {navItems.map((item) => {
               const isActive = location.pathname === item.path;
               return (
