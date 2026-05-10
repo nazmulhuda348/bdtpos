@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { Sale, Product, Store, User, Customer, Expense } from '../types';
 import { 
   ShoppingCart, Search, User as UserIcon, Hash, DollarSign, Trash2, X,
@@ -73,6 +73,9 @@ const Sales: React.FC<SalesProps> = ({
   const [isReturnModalOpen, setIsReturnModalOpen] = useState(false);
   const [saleToReturn, setSaleToReturn] = useState<Sale | null>(null);
   const [returnQty, setReturnQty] = useState(1);
+
+  // 🔴 AUTO PRINT STATE
+  const [autoPrint, setAutoPrint] = useState(true);
 
   useEffect(() => {
     if (isSessionActive && !invoiceId) {
@@ -190,7 +193,7 @@ const Sales: React.FC<SalesProps> = ({
   };
 
   const handleCartQtyChange = (cartId: string, qty: number) => {
-    if (qty < 1 || isNaN(qty)) return;
+    if (qty < 0.01 || isNaN(qty)) return;
     setCart(cart.map(c => c.cartId === cartId ? { ...c, quantity: qty } : c));
   };
 
@@ -209,8 +212,96 @@ const Sales: React.FC<SalesProps> = ({
   const finalAmountPaid = isWalkIn ? cartTotalAfterDiscount : (parseFloat(amountPaid) || 0);
   const cartDue = Math.max(0, cartTotalAfterDiscount - finalAmountPaid);
 
+  // 🔴 DIRECT PRINT LOGIC
+  const printDirectReceipt = useCallback((invId: string, printCart: CartItem[], cName: string, fPaid: number, fDue: number, dsc: number) => {
+    const iframe = document.createElement('iframe');
+    iframe.style.display = 'none';
+    document.body.appendChild(iframe);
+    
+    const cartHTML = printCart.map(item => `
+      <div class="row">
+        <span style="flex: 2;">${item.product.name}</span>
+        <span style="flex: 1; text-align: center;">${item.quantity}</span>
+        <span style="flex: 1; text-align: right;">${(item.quantity * item.unitPrice).toFixed(2)}</span>
+      </div>
+    `).join('');
+
+    const subTotal = printCart.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0);
+
+    const receiptHTML = `
+      <html>
+        <head>
+          <title>Receipt - ${invId}</title>
+          <style>
+            @page { margin: 0; }
+            body { 
+              font-family: 'Courier New', Courier, monospace; 
+              width: 80mm; 
+              padding: 10px; 
+              color: #000; 
+              font-size: 12px; 
+              margin: 0 auto;
+            }
+            .center { text-align: center; }
+            .bold { font-weight: bold; }
+            .row { display: flex; justify-content: space-between; margin: 3px 0; }
+            .divider { border-bottom: 1px dashed #000; margin: 8px 0; }
+          </style>
+        </head>
+        <body>
+          <div class="center bold" style="font-size: 16px; margin-bottom: 5px;">${currentStore.name}</div>
+          <div class="center" style="font-size: 10px;">${currentStore.location || ''}</div>
+          <div class="divider"></div>
+          
+          <div class="row"><span>Invoice:</span> <span>${invId}</span></div>
+          <div class="row"><span>Date:</span> <span>${new Date().toLocaleString('en-US')}</span></div>
+          <div class="row"><span>Customer:</span> <span>${cName}</span></div>
+          
+          <div class="divider"></div>
+          <div class="row bold">
+            <span style="flex: 2;">Item</span>
+            <span style="flex: 1; text-align: center;">Qty</span>
+            <span style="flex: 1; text-align: right;">Total</span>
+          </div>
+          <div class="divider"></div>
+          
+          ${cartHTML}
+          
+          <div class="divider"></div>
+          
+          <div class="row"><span>Subtotal:</span> <span>${subTotal.toFixed(2)}</span></div>
+          ${dsc > 0 ? `<div class="row"><span>Discount:</span> <span>-${(subTotal * dsc / 100).toFixed(2)}</span></div>` : ''}
+          <div class="row bold" style="font-size: 14px; margin-top: 5px;">
+            <span>Net Total:</span>
+            <span>${cartTotalAfterDiscount.toFixed(2)}</span>
+          </div>
+          <div class="row"><span>Amount Paid:</span> <span>${fPaid.toFixed(2)}</span></div>
+          <div class="row"><span>Due:</span> <span>${fDue.toFixed(2)}</span></div>
+          
+          <div class="divider"></div>
+          <div class="center" style="font-size: 10px; margin-top: 15px;">Thank you for shopping with us!</div>
+          <div class="center" style="font-size: 9px; margin-top: 5px;">Powered by BDT Soft</div>
+        </body>
+      </html>
+    `;
+    
+    const doc = iframe.contentWindow?.document;
+    if (doc) {
+      doc.open();
+      doc.write(receiptHTML);
+      doc.close();
+      
+      iframe.contentWindow?.focus();
+      setTimeout(() => {
+        iframe.contentWindow?.print();
+        setTimeout(() => document.body.removeChild(iframe), 1000);
+      }, 300);
+    }
+  }, [currentStore.name, currentStore.location, cartTotalAfterDiscount]);
+
   const handleConfirmSale = () => {
     if (cart.length === 0) return alert('Cart is empty. Please add items to sell.');
+    
     if (finalAmountPaid < cartTotalAfterDiscount && isWalkIn) {
        return alert('Walk-in customers cannot have dues. Please select a customer for credit sales.');
     }
@@ -225,17 +316,18 @@ const Sales: React.FC<SalesProps> = ({
     }
 
     let remainingPaid = finalAmountPaid;
+    const customerNameDisplay = isWalkIn ? 'Cash Sale (Walk-in)' : (customers.find(c => c.id === customerId)?.name || 'Walk-in Customer');
     
     cart.forEach(item => {
        const itemTotal = item.quantity * item.unitPrice * (1 - (discount / 100));
        const itemPaid = Math.min(itemTotal, remainingPaid);
-       const itemDue = itemTotal - itemPaid;
+       const itemDue = (itemTotal - itemPaid);
        remainingPaid -= itemPaid;
 
        onAddSale({
-          invoiceId,
+          invoiceId: invoiceId,
           customerId: isWalkIn ? (null as unknown as string) : customerId,
-          customerName: isWalkIn ? 'Cash Sale (Walk-in)' : (customers.find(c => c.id === customerId)?.name || 'Walk-in Customer'),
+          customerName: customerNameDisplay,
           productId: item.product.id,
           productName: item.product.name,
           quantity: item.quantity, 
@@ -259,6 +351,11 @@ const Sales: React.FC<SalesProps> = ({
     setShowSuccessToast(true); 
     setTimeout(() => setShowSuccessToast(false), 2000); 
     
+    // 🔴 TRIGGER AUTO PRINT
+    if (autoPrint) {
+       printDirectReceipt(invoiceId, cart, customerNameDisplay, finalAmountPaid, cartDue, discount);
+    }
+
     setCart([]);
     setCustomerId('');
     setCustomerSearchTerm('');
@@ -500,7 +597,7 @@ const Sales: React.FC<SalesProps> = ({
                   <th className="px-6 py-5">Date</th>
                   <th className="px-6 py-5">Invoice & Customer</th>
                   <th className="px-6 py-5">Product Issued</th>
-                  <th className="px-6 py-5 text-center">Qty</th>
+                  <th className="px-6 py-5 text-center">Qty / SqFt</th>
                   <th className="px-6 py-5 text-right">Settlement</th>
                   <th className="px-6 py-5 text-right">Actions</th>
                 </tr>
@@ -536,9 +633,6 @@ const Sales: React.FC<SalesProps> = ({
                       <td className="px-6 py-5 text-right">
                         <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                           {!isPayment && !isVoid && !isReturn && (
-                            <button onClick={() => handleOpenReturn(saleRecord)} title="Return Item" className="p-2 text-slate-600 hover:text-orange-400"><RotateCcw className="w-4 h-4" /></button>
-                          )}
-                          {!isPayment && !isVoid && !isReturn && (
                             <button onClick={() => handlePrint(saleRecord.invoiceId)} className="p-2 text-slate-600 hover:text-amber-400"><Printer className="w-4 h-4" /></button>
                           )}
                           {canDelete && !isVoid && !isReturn && (
@@ -571,48 +665,11 @@ const Sales: React.FC<SalesProps> = ({
         </div>
 
         <AnimatePresence>
-          {isReturnModalOpen && saleToReturn && (
-            <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
-              <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="bg-slate-900 w-full max-w-md rounded-[2.5rem] border border-slate-800 shadow-2xl p-8 relative">
-                 <button onClick={() => setIsReturnModalOpen(false)} className="absolute top-6 right-6 text-slate-500 hover:text-white"><X className="w-6 h-6" /></button>
-                 <h2 className="text-xl font-black text-white mb-2 flex items-center gap-2"><RotateCcw className="w-5 h-5 text-orange-500"/> Return Product</h2>
-                 <p className="text-xs text-slate-400 font-bold mb-6">Original Invoice: {saleToReturn.invoiceId}</p>
-
-                 <form onSubmit={handleReturnSubmit} className="space-y-6">
-                     <div className="bg-slate-800/50 p-4 rounded-2xl border border-slate-700/50 mb-6">
-                         <p className="text-sm font-bold text-white mb-1">{saleToReturn.productName}</p>
-                         <p className="text-xs text-slate-400">Unit Settlement: ${(saleToReturn.totalPrice / saleToReturn.quantity).toFixed(2)} / unit</p>
-                     </div>
-
-                     <div className="space-y-2">
-                         <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2">Return Quantity</label>
-                         <input type="number" min="1" max={getReturnableQty(saleToReturn)} value={returnQty} onWheel={(e) => (e.target as HTMLInputElement).blur()} onFocus={e => e.target.select()} onChange={e => setReturnQty(parseInt(e.target.value) || 1)} className="w-full px-5 py-4 bg-slate-800 border border-slate-700 rounded-2xl outline-none text-orange-400 font-black focus:border-orange-500" />
-                         <p className="text-[10px] text-orange-500/80 font-bold text-right mr-2 mt-1">Max returnable: {getReturnableQty(saleToReturn)} units</p>
-                     </div>
-
-                     <div className="bg-orange-500/10 border border-orange-500/20 p-4 rounded-2xl">
-                         <p className="text-[10px] font-black text-orange-500 uppercase tracking-widest mb-2">Refund Calculation</p>
-                         <div className="flex justify-between text-xs font-bold text-slate-300 mb-1">
-                             <span>Total Refund Value:</span><span>${(returnQty * (saleToReturn.totalPrice / saleToReturn.quantity)).toFixed(2)}</span>
-                         </div>
-                         <div className="flex justify-between text-xs font-bold text-slate-300">
-                             <span>Will Adjust Due First:</span><span className="text-emerald-400">Auto-calculated</span>
-                         </div>
-                     </div>
-
-                     <button type="submit" className="w-full bg-orange-500 text-white py-4 rounded-2xl font-black uppercase tracking-widest text-xs shadow-lg hover:bg-orange-600 transition-colors">Confirm Refund</button>
-                 </form>
-              </motion.div>
-            </div>
-          )}
-        </AnimatePresence>
-
-        <AnimatePresence>
           {showPrintModal && selectedInvoiceForPrint && (
-            <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 no-print">
-              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowPrintModal(false)} className="absolute inset-0 bg-slate-950/90 backdrop-blur-md" />
+            <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowPrintModal(false)} className="absolute inset-0 bg-slate-950/90 backdrop-blur-md no-print" />
               <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} className="relative w-full max-w-2xl bg-white text-slate-950 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-                <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50 no-print">
                   <h3 className="font-black uppercase tracking-widest text-xs text-slate-500">Invoice Preview</h3>
                   <div className="flex items-center gap-2">
                     <button onClick={() => window.print()} className="bg-slate-950 text-white px-4 py-2 rounded-xl font-bold text-[10px] uppercase tracking-widest flex items-center gap-2 hover:bg-slate-800 transition-colors"><Printer className="w-4 h-4" /> Print</button>
@@ -646,7 +703,7 @@ const Sales: React.FC<SalesProps> = ({
                   <table className="w-full mb-12">
                     <thead>
                       <tr className="border-b-2 border-slate-950 text-[10px] font-black uppercase tracking-widest">
-                        <th className="py-4 text-left">Description</th><th className="py-4 text-center">Qty</th><th className="py-4 text-right">Unit Price</th><th className="py-4 text-right">Total</th>
+                        <th className="py-4 text-left">Description</th><th className="py-4 text-center">Qty / SqFt</th><th className="py-4 text-right">Unit Price</th><th className="py-4 text-right">Total</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -679,10 +736,25 @@ const Sales: React.FC<SalesProps> = ({
         </AnimatePresence>
 
         <style>{`
+          /* PERFECT PRINT CSS FIX */
           @media print {
-            .no-print { display: none !important; }
-            .print-only { display: block !important; }
-            body { background: white !important; color: black !important; }
+            body * {
+              visibility: hidden;
+            }
+            #printable-invoice, #printable-invoice * {
+              visibility: visible;
+              color: #000 !important;
+            }
+            #printable-invoice {
+              position: absolute;
+              left: 0;
+              top: 0;
+              width: 100%;
+              padding: 20px;
+            }
+            .no-print {
+              display: none !important;
+            }
           }
         `}</style>
       </div>
@@ -699,6 +771,15 @@ const Sales: React.FC<SalesProps> = ({
             <h2 className="text-xl font-black text-white tracking-tight uppercase">Product Search</h2>
             <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em]">Scan or Type Name</p>
           </div>
+          {/* Auto Print Toggle Button */}
+          <button 
+            onClick={() => setAutoPrint(!autoPrint)}
+            className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase transition-all flex items-center border ${autoPrint ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-400' : 'bg-slate-800 border-slate-700 text-slate-500'}`}
+            title={autoPrint ? 'Auto Print is ON' : 'Auto Print is OFF'}
+          >
+            <Printer className="w-4 h-4 mr-1.5" />
+            {autoPrint ? 'Auto-Print' : 'Print OFF'}
+          </button>
         </div>
 
         {showSuccessToast && (
@@ -798,7 +879,7 @@ const Sales: React.FC<SalesProps> = ({
               <thead className="sticky top-0 bg-slate-900 z-10">
                 <tr className="text-[10px] font-black text-slate-500 uppercase tracking-widest border-b border-slate-800">
                   <th className="px-6 py-4">Product Details</th>
-                  <th className="px-4 py-4 text-center">Qty</th>
+                  <th className="px-4 py-4 text-center">Qty / SqFt</th>
                   <th className="px-4 py-4 text-right">Unit Price</th>
                   <th className="px-4 py-4 text-right">Total</th>
                   <th className="px-6 py-4 text-center"></th>
@@ -814,12 +895,13 @@ const Sales: React.FC<SalesProps> = ({
                       <td className="px-4 py-4 text-center">
                          <input 
                            type="number" 
-                           min="1" 
+                           step="0.01"
+                           min="0.01" 
                            value={cartItem.quantity} 
                            onWheel={(e) => (e.target as HTMLInputElement).blur()} 
                            onFocus={e => e.target.select()} 
-                           onChange={(e) => handleCartQtyChange(cartItem.cartId, parseInt(e.target.value))} 
-                           className="w-16 bg-slate-800 border border-slate-700 rounded-xl text-center font-black text-amber-400 text-sm focus:border-amber-400 outline-none p-1.5 shadow-inner" 
+                           onChange={(e) => handleCartQtyChange(cartItem.cartId, parseFloat(e.target.value))} 
+                           className="w-20 bg-slate-800 border border-slate-700 rounded-xl text-center font-black text-amber-400 text-sm focus:border-amber-400 outline-none p-1.5 shadow-inner" 
                          />
                       </td>
                       <td className="px-4 py-4 text-right">
@@ -830,7 +912,7 @@ const Sales: React.FC<SalesProps> = ({
                            onWheel={(e) => (e.target as HTMLInputElement).blur()} 
                            onFocus={e => e.target.select()} 
                            onChange={(e) => handleCartPriceChange(cartItem.cartId, parseFloat(e.target.value))} 
-                           className="w-20 bg-slate-800 border border-slate-700 rounded-xl text-right font-black text-emerald-400 text-sm focus:border-emerald-400 outline-none p-1.5 shadow-inner" 
+                           className="w-24 bg-slate-800 border border-slate-700 rounded-xl text-right font-black text-emerald-400 text-sm focus:border-emerald-400 outline-none p-1.5 shadow-inner" 
                          />
                       </td>
                       <td className="px-4 py-4 text-right font-black text-white">
@@ -987,7 +1069,7 @@ const Sales: React.FC<SalesProps> = ({
            </div>
         </div>
 
-        <div className="p-4 bg-slate-900 flex justify-end gap-4 border-t border-slate-800">
+        <div className="p-4 bg-slate-900 flex justify-end gap-3 border-t border-slate-800">
            <button 
              onClick={() => { 
                 setCart([]); 
@@ -995,13 +1077,13 @@ const Sales: React.FC<SalesProps> = ({
                 setCustomerId('');
                 setIsSessionActive(false); 
              }} 
-             className="px-6 py-4 bg-slate-800 border border-slate-700 text-slate-400 rounded-xl font-bold hover:text-white hover:bg-slate-700 transition-colors text-[10px] uppercase tracking-widest"
+             className="px-5 py-4 bg-slate-800 border border-slate-700 text-slate-400 rounded-xl font-bold hover:text-white hover:bg-slate-700 transition-colors text-[10px] uppercase tracking-widest"
            >
-             Close Session
+             Close
            </button>
            <button 
              onClick={handleConfirmSale} 
-             className="px-8 py-4 bg-emerald-500 text-slate-950 rounded-xl font-black flex items-center gap-2 hover:bg-emerald-400 transition-all shadow-xl shadow-emerald-500/20 text-[10px] uppercase tracking-widest"
+             className="px-6 py-4 bg-emerald-500 text-slate-950 rounded-xl font-black flex items-center gap-2 hover:bg-emerald-400 transition-all shadow-xl shadow-emerald-500/20 text-[10px] uppercase tracking-widest"
            >
              <CheckCircle2 className="w-5 h-5"/> Confirm Sale
            </button>
